@@ -1,0 +1,20 @@
+{
+  "name": "moocs-mcp-workers",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:local": "wrangler d1 execute moocs-mcp --local --file=../db/schema.sql"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20250901.0",
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "wrangler": "^3.80.0"
+  }
+}

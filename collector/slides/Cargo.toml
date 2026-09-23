@@ -1,0 +1,20 @@
+[package]
+name = "collect-headless"
+version = "0.1.0"
+edition = "2021"
+description = "Non-interactive headless wrapper around moocs-collect for CI batch collection"
+license = "MIT"
+
+# 公式 CLI ではなくコアライブラリを直接使う
+# 破壊的変更に備えてコミット / タグでピン留めする
+[dependencies]
+collect = { git = "https://github.com/yu7400ki/moocs-collect.git", package = "collect" }
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+
+[profile.release]
+lto = true

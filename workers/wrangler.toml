@@ -1,0 +1,18 @@
+name = "moocs-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# Secrets (wrangler secret put ...):
+#   INIAD_OIDC_ISSUER / INIAD_OIDC_CLIENT_ID
+
+[[d1_databases]]
+binding = "DB"
+database_name = "moocs-mcp"
+database_id = "REPLACE_ME"
+
+[[r2_buckets]]
+binding = "SLIDES"
+bucket_name = "moocs-slides"
+
+[vars]
+MOOCS_YEAR = "2026"

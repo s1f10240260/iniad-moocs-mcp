@@ -1,0 +1,37 @@
+# moocs-mcp は著作物（スライド PDF / 課題 HTML）をリポジトリに commit しない
+# 収集物は GitHub Actions の Artifact / R2 / D1 にのみ保存する
+
+# secrets
+.env
+.env.*
+*.pem
+*.key
+cookie*.txt
+cookie*.json
+cookies.sqlite
+
+# collector outputs
+out/
+dist/
+tmp/
+*.pdf
+
+# Rust
+target/
+
+# Node
+node_modules/
+.wrangler/
+dist/
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
