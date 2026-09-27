@@ -1,0 +1,2 @@
+# PDF は改行変換させない（fixture のダミー PDF は NUL を含まずテキスト判定されるため）
+*.pdf binary
