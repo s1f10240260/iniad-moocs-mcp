@@ -1,5 +1,8 @@
--- INIAD Moocs MCP — Cloudflare D1 schema
--- 詳細設計: ../DESIGN.md 「検索設計」
+-- INIAD Moocs MCP — Cloudflare D1 schema (migration 0001)
+-- 詳細設計: ../../DESIGN.md 「検索設計」 / ../../docs/INGEST.md
+--
+-- スキーマ変更は既存ファイルを編集せず、0002_xxx.sql のように新しい migration を追加すること。
+-- 適用: cd workers && npm run db:local（本番は npm run db:remote）
 --
 -- 設計メモ
 -- - 各テーブルは内部キー rid (INTEGER PRIMARY KEY) を持ち、FTS5 の rowid と一致させる。
@@ -12,7 +15,7 @@
 -- - upsert は `INSERT ... ON CONFLICT(id) DO UPDATE` を使うこと。
 --   `INSERT OR REPLACE` は rid が変わり、FTS 同期トリガーも正しく動かない。
 
-PRAGMA foreign_keys = ON;
+-- 外部キーは D1 では常に有効（migration はトランザクション内で走るため PRAGMA foreign_keys は効かない）
 
 CREATE TABLE IF NOT EXISTS courses (
     rid         INTEGER PRIMARY KEY,

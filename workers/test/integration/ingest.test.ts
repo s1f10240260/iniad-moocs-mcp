@@ -20,7 +20,6 @@ import { d1Query, runWrangler, type WranglerTarget } from "../../ingest/wrangler
 
 const WORKERS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const FIXTURE = path.resolve(WORKERS, "../tests/fixtures/sample-out");
-const SCHEMA = path.resolve(WORKERS, "../db/schema.sql");
 
 let persistTo: string;
 let target: WranglerTarget;
@@ -74,7 +73,7 @@ beforeAll(async () => {
   await mkdir(path.join(WORKERS, ".wrangler"), { recursive: true });
   persistTo = await mkdtemp(path.join(WORKERS, ".wrangler", "t-"));
   target = { remote: false, persistTo, database: "moocs-mcp", bucket: "moocs-slides" };
-  await runWrangler(["d1", "execute", "moocs-mcp", "--local", "--persist-to", persistTo, "--file", SCHEMA]);
+  await runWrangler(["d1", "migrations", "apply", "moocs-mcp", "--local", "--persist-to", persistTo]);
 });
 
 afterAll(async () => {
@@ -185,6 +184,28 @@ describe("ingest (local D1 + R2)", () => {
 
       const [counts] = await q("SELECT (SELECT count(*) FROM lectures) l, (SELECT count(*) FROM lectures_fts) f");
       expect(counts).toEqual({ l: 3, f: 3 });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("保存する HTML から script を落とし、LaTeX は残す", async () => {
+    const [row] = await q<{ content_html: string }>("SELECT content_html FROM contents WHERE id = '2026/INI201/02/quiz'");
+    expect(row.content_html).not.toContain("<script");
+    expect(row.content_html).toContain("\\(D_{\\mathrm{KL}}(P \\| Q)\\)");
+  });
+
+  it("別名ファイルから消したコースは別名も検索から消える", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "sample-out-"));
+    try {
+      await cp(FIXTURE, dir, { recursive: true });
+      await writeFile(path.join(dir, "aliases.json"), "{}\n");
+      const { code } = await ingest(dir);
+      expect(code).toBe(0);
+      const [course] = await q("SELECT aliases, aliases_bg FROM courses WHERE id = '2026/INI201'");
+      expect(course).toEqual({ aliases: "", aliases_bg: "" });
+      expect(await search("courses_fts", "ds基礎")).toEqual([]);
+      await q("INSERT INTO courses_fts (courses_fts, rank) VALUES ('integrity-check', 1)");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

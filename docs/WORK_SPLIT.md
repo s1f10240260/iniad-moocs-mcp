@@ -55,7 +55,7 @@
 
 ### Phase 3: データ基盤（`db/`, アップロード）
 
-- [ ] `db/schema.sql` を実 D1 / ローカル D1 に適用し、FTS5 の日本語部分一致を検証（アプリ側バイグラムに変更。ローカル済み・実 D1 未）
+- [ ] `db/migrations/` を実 D1 / ローカル D1 に適用し、FTS5 の日本語部分一致を検証（アプリ側バイグラムに変更。ローカル済み・実 D1 未）
 - [x] `courses` / `lectures` / `contents` の upsert スクリプト（冪等）→ [INGEST.md](INGEST.md)
   - 入力: A の `out/` レイアウト + JSONL
   - R2 キー: `{year}/{course}/{lecture}/slides.pdf`

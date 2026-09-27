@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { addJsonl, emptyManifest } from "../../ingest/manifest.js";
-import { buildStatements, MAX_STATEMENT_BYTES, sqlLiteral, type ContentRow } from "../../ingest/sql.js";
+import { buildAliasStatements, buildStatements, MAX_STATEMENT_BYTES, sqlLiteral, type ContentRow } from "../../ingest/sql.js";
 
 describe("sqlLiteral", () => {
   it("シングルクォートをエスケープする", () => {
@@ -34,10 +34,9 @@ describe("buildStatements", () => {
     expect(statements[0]).toContain("'デー ータ タサ サイ イエ エン ンス ス基 基礎 礎'");
   });
 
-  it("別名は指定されたコースだけ管理する", () => {
-    const { statements } = buildStatements(manifestWith({}), [], new Map([["INI201", ["DS基礎", "データサイエンス"]]]));
-    expect(statements[0]).toContain("'DS基礎,データサイエンス'");
-    expect(statements[0]).toContain("SET aliases = excluded.aliases, aliases_bg = excluded.aliases_bg");
+  it("コースの upsert は別名に触れない（別名は buildAliasStatements が正本）", () => {
+    const { statements } = buildStatements(manifestWith({ course_name: "データサイエンス基礎" }), []);
+    expect(statements[0]).not.toContain("aliases");
   });
 
   it("D1 の文長上限を超える contents は oversized に回す", () => {
@@ -56,5 +55,20 @@ describe("buildStatements", () => {
     ]);
     expect(oversized).toEqual(["huge"]);
     expect(statements).toHaveLength(1);
+  });
+});
+
+describe("buildAliasStatements", () => {
+  it("ファイルにあるコードは別名を設定し、無いコードは空にする", () => {
+    const stmts = buildAliasStatements(new Map([["INI201", ["DS基礎", "データサイエンス"]]]));
+    expect(stmts[0]).toContain("SET aliases = 'DS基礎,データサイエンス'");
+    expect(stmts[0]).toContain("WHERE code = 'INI201'");
+    expect(stmts.at(-1)).toContain("AND code NOT IN ('INI201')");
+  });
+
+  it("空のファイルなら全コースの別名を空にする", () => {
+    expect(buildAliasStatements(new Map())).toEqual([
+      "UPDATE courses SET aliases = '', aliases_bg = '', updated_at = datetime('now') WHERE (aliases <> '' OR aliases_bg <> '');",
+    ]);
   });
 });

@@ -3,7 +3,7 @@
 Phase 3 の成果物。Collector（Phase 1–2）の `out/` と JSON Lines を読み、D1 と R2 に**冪等に** upsert する。
 
 - コード: [`workers/ingest/`](../workers/ingest/)
-- スキーマ: [`db/schema.sql`](../db/schema.sql)
+- スキーマ: [`db/migrations/`](../db/migrations/)（`npm run db:local` / `db:remote` で適用）
 - fixture: [`tests/fixtures/sample-out/`](../tests/fixtures/sample-out/)
 
 ## 使い方
@@ -12,7 +12,7 @@ Phase 3 の成果物。Collector（Phase 1–2）の `out/` と JSON Lines を�
 cd workers
 npm install
 
-# ローカル D1 にスキーマを適用（初回のみ・何度流しても安全）
+# ローカル D1 にスキーマを適用（未適用の migration だけが流れる）
 npm run db:local
 
 # fixture を投入（ローカル D1 + R2 モック）
@@ -30,11 +30,12 @@ npm run ingest -- \
 |---|---|
 | `--out` | Collector の出力ルート（`{year}/{CODE}/{LL}/...`） |
 | `--jsonl` | `collect-*.jsonl`（複数可） |
-| `--aliases` | コース別名 `{"INI201": ["DS基礎"]}`。指定したコースだけ `courses.aliases` を上書き |
+| `--aliases` | コース別名 `{"INI201": ["DS基礎"]}`。**このファイルが正本**で、載っていないコースの別名は空にする（JSONL に出てこないコースにも反映） |
 | `--remote` | 本番 D1 / R2 に反映（既定はローカル） |
 | `--persist-to` | ローカル D1 / R2 の保存先（テスト用） |
 | `--force-upload` | ハッシュが同じ PDF も再アップロード |
 | `--concurrency` | R2 アップロード並列数（既定: ローカル 1 / リモート 4） |
+| `--retries` | wrangler 呼び出し（D1 / R2）の再試行回数。指数バックオフ（既定 3） |
 | `--dry-run` | D1 / R2 に触れず SQL を stdout に出す（イベントは stderr） |
 
 出力は JSON Lines（`uploaded` / `rejected` / `missing_file` / `oversized` / `summary`）。
@@ -56,9 +57,12 @@ Collector の `error` イベント（3 回リトライ後スキップ）は想�
 
 ## スキーマ上の決定（Phase 3）
 
+- スキーマは `db/migrations/` の D1 migrations で管理する。変更は既存ファイルを編集せず `0002_xxx.sql` を追加する。
+
 - **FTS は external content + トリガー同期。** `*_fts` の `rowid` = 本体の `rid`（明示的な `INTEGER PRIMARY KEY`）。
   暗黙 rowid は VACUUM で変わり得るため使わない。検索結果は `JOIN ... ON b.rid = f.rowid` で本体に戻す。
 - upsert は必ず `ON CONFLICT(id) DO UPDATE`。`INSERT OR REPLACE` は `rid` が変わり FTS 同期が壊れるので禁止。
+- `contents.content_html` は保存前にサニタイズする（`script` / `style` / `iframe` 等、`on*` 属性、`javascript:` URL を除去）。MCP で返すため、採点用スクリプト等を含めない。
 - `contents.content_text`（HTML タグ除去済み）を追加。`<script>` の中身や属性値は検索対象にならない。LaTeX は文字列として残る。表示用は `content_html`。
 - `contents.sha256` を追加（R2 差分アップロード判定）。
 - `lectures_fts` はタイトルのみ。レクチャー番号は数値列で引く。

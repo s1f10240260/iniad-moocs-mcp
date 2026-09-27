@@ -142,7 +142,7 @@ Moocs → Google Slides embed → SVG抽出 → PDF変換 → R2保存
 ### 検索方式: アプリ側バイグラム (Cloudflare D1 FTS5 + unicode61)
 
 ```sql
--- 抜粋。完全版は db/schema.sql、設計判断は docs/INGEST.md
+-- 抜粋。完全版は db/migrations/、設計判断は docs/INGEST.md
 CREATE VIRTUAL TABLE contents_fts USING fts5(
     title_bg, text_bg,              -- バイグラム化したテキスト（例: "デー ータ タ基 基礎 礎"）
     content = 'contents', content_rowid = 'rid',

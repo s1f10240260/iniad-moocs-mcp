@@ -148,7 +148,7 @@ export function addJsonl(manifest: Manifest, source: string, text: string): void
       lectureId,
       type: contentType,
       file,
-      title: optionalText(ev.title),
+      title: optionalText(ev.title) ?? manifest.contents.get(contentId)?.title,
     });
   });
 }

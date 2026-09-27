@@ -60,6 +60,13 @@ describe("addJsonl", () => {
     expect(m.contents.get("2026/INI201/02/quiz")?.type).toBe("quiz");
   });
 
+  it("同じ content の done が再度来ても、title が無ければ前の title を残す", () => {
+    const m = emptyManifest();
+    const ev = { event: "done", year: 2026, course: "INI201", lecture: 2, type: "quiz", file: "2026/INI201/02/quiz.html" };
+    addJsonl(m, "contents", jsonl({ ...ev, title: "第2回 ミニクイズ" }, ev));
+    expect(m.contents.get("2026/INI201/02/quiz")?.title).toBe("第2回 ミニクイズ");
+  });
+
   it("error イベントは件数だけ数え、データは作らない", () => {
     const m = emptyManifest();
     addJsonl(m, "slides", jsonl({ event: "error", year: 2026, course: "INI201", lecture: 3, code: "auth_expired" }));

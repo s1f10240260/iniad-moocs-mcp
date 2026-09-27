@@ -13,9 +13,9 @@ import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
 
-import { htmlToText } from "./html.js";
+import { htmlToText, sanitizeHtml } from "./html.js";
 import { addJsonl, emptyManifest, type Manifest } from "./manifest.js";
-import { buildStatements, type ContentRow } from "./sql.js";
+import { buildAliasStatements, buildStatements, type ContentRow } from "./sql.js";
 import { d1ExecuteFile, d1Query, r2Put, type WranglerTarget } from "./wrangler.js";
 
 export const EXIT_RUNTIME = 1;
@@ -25,11 +25,12 @@ const USAGE = `usage: ingest --out <dir> --jsonl <file> [--jsonl <file> ...] [op
 
   --out <dir>          Collector の出力ルート（{year}/{CODE}/{LL}/... が並ぶ）
   --jsonl <file>       collect-*.jsonl（複数指定可）
-  --aliases <file>     コース別名 JSON（{"INI201": ["DS基礎", ...]}）
+  --aliases <file>     コース別名 JSON（{"INI201": ["DS基礎", ...]}）。このファイルが別名の正本になる
   --remote             本番の D1 / R2 に反映する（既定はローカル）
   --persist-to <dir>   ローカル D1 / R2 の永続化先
   --force-upload       ハッシュが同じ PDF も R2 に再アップロードする
   --concurrency <n>    R2 アップロード並列数（既定: ローカル 1 / リモート 4）
+  --retries <n>        wrangler 呼び出しの再試行回数（既定 3）
   --dry-run            D1 / R2 に触れず、生成した SQL を stdout に出す
   --database <name>    D1 database_name（既定 moocs-mcp）
   --bucket <name>      R2 bucket_name（既定 moocs-slides）`;
@@ -42,6 +43,7 @@ interface Options {
   aliases?: string;
   forceUpload: boolean;
   concurrency: number;
+  retries: number;
   dryRun: boolean;
   target: WranglerTarget;
 }
@@ -59,6 +61,7 @@ function parseOptions(argv: string[]): Options {
         "persist-to": { type: "string" },
         "force-upload": { type: "boolean", default: false },
         concurrency: { type: "string" },
+        retries: { type: "string", default: "3" },
         "dry-run": { type: "boolean", default: false },
         database: { type: "string", default: "moocs-mcp" },
         bucket: { type: "string", default: "moocs-slides" },
@@ -77,6 +80,10 @@ function parseOptions(argv: string[]): Options {
   if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 16) {
     throw new UsageError("--concurrency は 1〜16 の整数で指定してください");
   }
+  const retries = Number(values.retries);
+  if (!Number.isInteger(retries) || retries < 0 || retries > 10) {
+    throw new UsageError("--retries は 0〜10 の整数で指定してください");
+  }
 
   // wrangler は workers/ を cwd に動くので、ユーザー指定パスは絶対パスにしておく
   return {
@@ -85,6 +92,7 @@ function parseOptions(argv: string[]): Options {
     aliases: values.aliases && path.resolve(values.aliases),
     forceUpload: values["force-upload"],
     concurrency,
+    retries,
     dryRun: values["dry-run"],
     target: {
       remote: values.remote,
@@ -95,8 +103,8 @@ function parseOptions(argv: string[]): Options {
   };
 }
 
-async function loadAliases(file: string | undefined): Promise<Map<string, string[]>> {
-  if (!file) return new Map();
+async function loadAliases(file: string | undefined): Promise<Map<string, string[]> | undefined> {
+  if (!file) return undefined;
   const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new UsageError(`${file}: {"CODE": ["別名", ...]} 形式の JSON にしてください`);
@@ -110,6 +118,18 @@ async function loadAliases(file: string | undefined): Promise<Map<string, string
     map.set(code, list.map((a) => a.replace(/,/g, " ").trim()).filter(Boolean));
   }
   return map;
+}
+
+/** 一時的な失敗（ネットワーク・API 5xx・wrangler 起動失敗）に備えて指数バックオフで再試行する */
+async function withRetry<T>(retries: number, fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (attempt >= retries) throw e;
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+    }
+  }
 }
 
 async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -147,9 +167,8 @@ export async function run(argv: string[]): Promise<number> {
   // slide の既存ハッシュ（差分アップロード判定用）
   const known = new Map<string, string | null>();
   if (!opts.dryRun && !opts.forceUpload) {
-    const rows = await d1Query<{ id: string; sha256: string | null }>(
-      opts.target,
-      "SELECT id, sha256 FROM contents WHERE type = 'slide'",
+    const rows = await withRetry(opts.retries, () =>
+      d1Query<{ id: string; sha256: string | null }>(opts.target, "SELECT id, sha256 FROM contents WHERE type = 'slide'"),
     );
     for (const r of rows) known.set(r.id, r.sha256);
   }
@@ -173,23 +192,28 @@ export async function run(argv: string[]): Promise<number> {
       rows.push({ ...c, contentHtml: "", contentText: "", r2Key: c.file, sha256 });
     } else {
       const html = data.toString("utf8");
-      rows.push({ ...c, contentHtml: html, contentText: htmlToText(html), r2Key: null, sha256: null });
+      rows.push({ ...c, contentHtml: sanitizeHtml(html), contentText: htmlToText(html), r2Key: null, sha256: null });
     }
   }
   for (const id of missing) emit({ event: "missing_file", id });
 
-  const { statements, oversized } = buildStatements(manifest, rows, aliases);
+  const { statements, oversized } = buildStatements(manifest, rows);
+  // 別名は manifest に関係なくファイルの内容をそのまま反映する（courses の upsert の後に流す）
+  if (aliases) statements.push(...buildAliasStatements(aliases));
   for (const id of oversized) emit({ event: "oversized", id });
   const sql = `${statements.join("\n")}\n`;
+  // Collector との契約違反があれば CI で気付けるよう失敗扱いにする（正常分は反映する）。
+  // collector_errors はリトライ後スキップの想定内なので成功扱い
+  const exitCode = manifest.rejected.length + missing.length + oversized.length > 0 ? EXIT_RUNTIME : 0;
 
   if (opts.dryRun) {
     process.stdout.write(sql);
-    return 0;
+    return exitCode;
   }
 
   // R2 → D1 の順。D1 が存在しない R2 オブジェクトを指す瞬間を作らない
   await mapLimit(uploads, opts.concurrency, async (u) => {
-    await r2Put(opts.target, u.key, u.file, "application/pdf");
+    await withRetry(opts.retries, () => r2Put(opts.target, u.key, u.file, "application/pdf"));
     emit({ event: "uploaded", id: u.id, key: u.key });
   });
 
@@ -197,7 +221,8 @@ export async function run(argv: string[]): Promise<number> {
   try {
     const sqlFile = path.join(tmp, "upsert.sql");
     await writeFile(sqlFile, sql, "utf8");
-    if (statements.length > 0) await d1ExecuteFile(opts.target, sqlFile);
+    // 文はすべて冪等なので、途中まで適用されてから失敗しても丸ごと再実行してよい
+    if (statements.length > 0) await withRetry(opts.retries, () => d1ExecuteFile(opts.target, sqlFile));
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
@@ -215,7 +240,5 @@ export async function run(argv: string[]): Promise<number> {
     missing_files: missing.length,
     oversized: oversized.length,
   });
-  // 正常分は反映済み。Collector との契約違反があれば CI で気付けるよう失敗扱いにする
-  // （collector_errors はリトライ後スキップの想定内なので成功扱い）
-  return manifest.rejected.length + missing.length + oversized.length > 0 ? EXIT_RUNTIME : 0;
+  return exitCode;
 }

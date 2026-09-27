@@ -22,14 +22,17 @@ function segments(text: string): string[][] {
   return (normalize(text).match(SEGMENT) ?? []).map((s) => Array.from(s));
 }
 
+function bigrams(chars: string[]): string[] {
+  const grams: string[] = [];
+  for (let i = 0; i + 1 < chars.length; i++) grams.push(chars[i] + chars[i + 1]);
+  return grams;
+}
+
 /** 索引用のトークン列（空白区切り） */
 export function toBigramText(text: string): string {
-  const out: string[] = [];
-  for (const chars of segments(text)) {
-    for (let i = 0; i + 1 < chars.length; i++) out.push(chars[i] + chars[i + 1]);
-    out.push(chars[chars.length - 1]);
-  }
-  return out.join(" ");
+  return segments(text)
+    .flatMap((chars) => [...bigrams(chars), chars[chars.length - 1]])
+    .join(" ");
 }
 
 /**
@@ -37,11 +40,8 @@ export function toBigramText(text: string): string {
  * 空白などで区切られた語は AND で結ぶ。
  */
 export function toBigramQuery(query: string): string | null {
-  const terms = segments(query).map((chars) => {
-    if (chars.length === 1) return `"${chars[0]}"*`;
-    const grams: string[] = [];
-    for (let i = 0; i + 1 < chars.length; i++) grams.push(chars[i] + chars[i + 1]);
-    return `"${grams.join(" ")}"`;
-  });
+  const terms = segments(query).map((chars) =>
+    chars.length === 1 ? `"${chars[0]}"*` : `"${bigrams(chars).join(" ")}"`,
+  );
   return terms.length > 0 ? terms.join(" AND ") : null;
 }

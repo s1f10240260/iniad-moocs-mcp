@@ -61,30 +61,16 @@ function withBigram(col: string, value: string): Record<string, string> {
   return { [col]: value, [`${col}_bg`]: toBigramText(value) };
 }
 
-export function buildStatements(
-  manifest: Manifest,
-  contents: ContentRow[],
-  aliases: ReadonlyMap<string, string[]> = new Map(),
-): BuildResult {
+export function buildStatements(manifest: Manifest, contents: ContentRow[]): BuildResult {
   const statements: string[] = [];
   const oversized: string[] = [];
 
   for (const c of manifest.courses.values()) {
-    const managed: string[] = [];
-    if (c.name !== undefined) managed.push("name", "name_bg");
-    const alias = aliases.get(c.code);
-    if (alias !== undefined) managed.push("aliases", "aliases_bg");
     statements.push(
       upsert(
         "courses",
-        {
-          id: c.id,
-          year: c.year,
-          ...withBigram("code", c.code),
-          ...withBigram("name", c.name ?? c.code),
-          ...withBigram("aliases", alias?.join(",") ?? ""),
-        },
-        managed,
+        { id: c.id, year: c.year, ...withBigram("code", c.code), ...withBigram("name", c.name ?? c.code) },
+        c.name !== undefined ? ["name", "name_bg"] : [],
       ),
     );
   }
@@ -125,4 +111,27 @@ export function buildStatements(
   }
 
   return { statements, oversized };
+}
+
+/**
+ * 別名ファイルを正本として courses.aliases を揃える。
+ * - ファイルにあるコード: 全年度の同コードに別名を設定
+ * - ファイルに無いコード: 別名を空にする（ファイルから消した別名が残らないように）
+ * 値が変わらない行は更新しない。
+ */
+export function buildAliasStatements(aliases: ReadonlyMap<string, string[]>): string[] {
+  const statements: string[] = [];
+  for (const [code, list] of aliases) {
+    const { aliases: value, aliases_bg: bg } = withBigram("aliases", list.join(","));
+    statements.push(
+      `UPDATE courses SET aliases = ${sqlLiteral(value)}, aliases_bg = ${sqlLiteral(bg)}, updated_at = datetime('now') ` +
+        `WHERE code = ${sqlLiteral(code)} AND (aliases IS NOT ${sqlLiteral(value)} OR aliases_bg IS NOT ${sqlLiteral(bg)});`,
+    );
+  }
+  const listed = [...aliases.keys()].map(sqlLiteral).join(", ");
+  statements.push(
+    `UPDATE courses SET aliases = '', aliases_bg = '', updated_at = datetime('now') ` +
+      `WHERE (aliases <> '' OR aliases_bg <> '')${listed ? ` AND code NOT IN (${listed})` : ""};`,
+  );
+  return statements;
 }
