@@ -136,41 +136,26 @@ Moocs → Google Slides embed → SVG抽出 → PDF変換 → R2保存
 | テーブル | 検索対象フィールド | 用途 |
 |---------|-------------------|------|
 | **courses** | code, name, aliases | コース特定 |
-| **lectures** | number, title | レクチャー特定 |
-| **contents** | type, title, content_html | コンテンツ特定 |
+| **lectures** | title（number は数値で絞り込み） | レクチャー特定 |
+| **contents** | title, content_text（type は絞り込み） | コンテンツ特定 |
 
-### 検索方式: trigram (Cloudflare D1 FTS5)
+### 検索方式: アプリ側バイグラム (Cloudflare D1 FTS5 + unicode61)
 
 ```sql
--- コース検索
-CREATE VIRTUAL TABLE courses_fts USING fts5(
-    code,
-    name,
-    aliases,
-    tokenize='trigram'
-);
-
--- レクチャー検索
-CREATE VIRTUAL TABLE lectures_fts USING fts5(
-    number,
-    title,
-    tokenize='trigram'
-);
-
--- コンテンツ検索
+-- 抜粋。完全版は db/schema.sql、設計判断は docs/INGEST.md
 CREATE VIRTUAL TABLE contents_fts USING fts5(
-    type,
-    title,
-    content_html,
-    tokenize='trigram'
+    title_bg, text_bg,              -- バイグラム化したテキスト（例: "デー ータ タ基 基礎 礎"）
+    content = 'contents', content_rowid = 'rid',
+    tokenize = 'unicode61 remove_diacritics 0'
 );
+-- courses_fts (code_bg, name_bg, aliases_bg) / lectures_fts (title_bg) も同様。本体との同期はトリガー
 ```
 
-**trigramを選んだ理由:**
-- 日本語の部分一致検索に対応
+**バイグラムを選んだ理由:**
+- 日本語の部分一致検索に対応し、trigram では引けない **2 文字の語（「課題」「統計」）も検索できる**
+- 1 文字は前方一致で検索できる
 - 形態素解析が不要（シンプル）
-- Cloudflare D1で無料利用可能
-- 高速
+- D1 はカスタムトークナイザを使えないため、分割はアプリ側（`workers/src/search/bigram.ts`）で行い、ingest と Workers で共有する
 
 ## ユースケース
 
@@ -279,7 +264,7 @@ CREATE VIRTUAL TABLE contents_fts USING fts5(
 | コンテンツ収集 | contents-collector (Python + Playwright) |
 | MCP Server | Cloudflare Workers |
 | API | Cloudflare Workers |
-| データベース | Cloudflare D1 (FTS5: trigram) |
+| データベース | Cloudflare D1 (FTS5: アプリ側バイグラム) |
 | ストレージ | Cloudflare R2 |
 | CI/CD | GitHub Actions |
 | 認証 | INIAD Keycloak |

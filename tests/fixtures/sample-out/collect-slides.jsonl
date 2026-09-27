@@ -1,0 +1,6 @@
+{"event":"start","year":2026,"course":"INI201","lecture":1}
+{"event":"done","year":2026,"course":"INI201","lecture":1,"file":"2026/INI201/01/slides.pdf","pages":1,"course_name":"データサイエンス基礎","lecture_title":"第1回 データサイエンスとは"}
+{"event":"start","year":2026,"course":"INI201","lecture":2}
+{"event":"done","year":2026,"course":"INI201","lecture":2,"file":"2026/INI201/02/slides.pdf","pages":1,"course_name":"データサイエンス基礎","lecture_title":"第2回 確率分布とKLダイバージェンス"}
+{"event":"start","year":2026,"course":"INI201","lecture":3}
+{"event":"error","year":2026,"course":"INI201","lecture":3,"code":"retry_exhausted","message":"fixture: 3 回リトライ後にスキップ"}
