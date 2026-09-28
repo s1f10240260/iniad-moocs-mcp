@@ -30,7 +30,7 @@ npm run ingest -- \
 |---|---|
 | `--out` | Collector の出力ルート（`{year}/{CODE}/{LL}/...`） |
 | `--jsonl` | `collect-*.jsonl`（複数可） |
-| `--aliases` | コース別名 `{"INI201": ["DS基礎"]}`。**このファイルが正本**で、載っていないコースの別名は空にする（JSONL に出てこないコースにも反映） |
+| `--aliases` | コース別名 `{"INI201": ["DS基礎"]}`。**このファイルが正本**で、載っていないコースの別名は空にする（JSONL に出てこないコースにも反映）。空ファイルなら `warning` を出す |
 | `--remote` | 本番 D1 / R2 に反映（既定はローカル） |
 | `--persist-to` | ローカル D1 / R2 の保存先（テスト用） |
 | `--force-upload` | ハッシュが同じ PDF も再アップロード |
@@ -38,7 +38,7 @@ npm run ingest -- \
 | `--retries` | wrangler 呼び出し（D1 / R2）の再試行回数。指数バックオフ（既定 3） |
 | `--dry-run` | D1 / R2 に触れず SQL を stdout に出す（イベントは stderr） |
 
-出力は JSON Lines（`uploaded` / `rejected` / `missing_file` / `oversized` / `summary`）。
+出力は JSON Lines（`uploaded` / `rejected` / `missing_file` / `oversized` / `warning` / `summary`）。
 
 exit code は Collector と同じ契約: **成功 0 / 実行時失敗 1 / 引数不足 2**。
 契約違反の行（`rejected`）・ファイル欠落・D1 文長超過があった場合は、正常分を反映したうえで 1 を返す。
@@ -62,8 +62,12 @@ Collector の `error` イベント（3 回リトライ後スキップ）は想�
 - **FTS は external content + トリガー同期。** `*_fts` の `rowid` = 本体の `rid`（明示的な `INTEGER PRIMARY KEY`）。
   暗黙 rowid は VACUUM で変わり得るため使わない。検索結果は `JOIN ... ON b.rid = f.rowid` で本体に戻す。
 - upsert は必ず `ON CONFLICT(id) DO UPDATE`。`INSERT OR REPLACE` は `rid` が変わり FTS 同期が壊れるので禁止。
-- `contents.content_html` は保存前にサニタイズする（`script` / `style` / `iframe` 等、`on*` 属性、`javascript:` URL を除去）。MCP で返すため、採点用スクリプト等を含めない。
-- `contents.content_text`（HTML タグ除去済み）を追加。`<script>` の中身や属性値は検索対象にならない。LaTeX は文字列として残る。表示用は `content_html`。
+- `contents.content_html` は保存前に `sanitize-html` で**許可リスト方式**のサニタイズをする（MCP で返すため、採点用スクリプト等を含めない）。
+  - 残すのは問題文の表示に必要なタグ（`p` / `div` / `ol` / `li` / `table` / `img` / `a` / `code` / `pre` など）と、`class` / `href` / `src` / `alt` など一部の属性だけ
+  - `on*` / `style` / `data-*` 属性は落とす。URL は `http` / `https` / `mailto`（画像は `data:` も）のみ
+  - `script` / `style` / `noscript` / `template` / `textarea` は中身ごと捨てる（閉じタグが無くても）
+  - 正規表現では `<img/src="x"/onerror=…>`・文字参照・属性値中の `>` などを取りこぼすため、パーサー（htmlparser2）ベースにしている
+- `contents.content_text`（htmlparser2 でテキストだけ取り出したもの）を追加。`<script>` の中身や属性値は検索対象にならない。LaTeX は文字列として残る。表示用は `content_html`。
 - `contents.sha256` を追加（R2 差分アップロード判定）。
 - `lectures_fts` はタイトルのみ。レクチャー番号は数値列で引く。
 - `contents.type` に CHECK 制約（`quiz` / `assignment` / `slide`）。

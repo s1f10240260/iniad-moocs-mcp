@@ -1,56 +1,63 @@
 /**
- * Moocs から取得した HTML の前処理。
+ * Moocs から取得した HTML の前処理。正規表現ではなく HTML パーサー（htmlparser2）で読む。
+ * 正規表現では `<img/onerror=...>`・文字参照・属性値中の `>`・閉じタグ無しの <script> などを取りこぼすため。
  *
- * - sanitizeHtml: D1 に保存し MCP で返す表示用 HTML。実行されうる要素・属性を落とす
- *   （採点用スクリプトに答えが含まれている可能性もあるため）。
+ * - sanitizeHtml: D1 に保存し MCP で返す表示用 HTML。許可したタグ・属性・URL スキームだけを残す
+ *   （採点用スクリプトや data-* 属性に答えが含まれている可能性もあるため）。
  * - htmlToText: 検索・スニペット用のプレーンテキスト。LaTeX（\( ... \) など）は文字列のまま残す。
  */
 
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
+import { Parser } from "htmlparser2";
+import sanitize from "sanitize-html";
+
+/** 中身ごと捨てる要素。閉じタグが無くても、以降はこの要素の中身として扱われる */
+const DROP_WITH_CONTENT = ["script", "style", "noscript", "template", "textarea"];
+
+const SANITIZE_OPTIONS: sanitize.IOptions = {
+  // 既定（p / div / table / ol / li / code / pre / h1-6 / sub / sup など）に画像とラベルを足す
+  allowedTags: [...sanitize.defaults.allowedTags, "img", "label"],
+  allowedAttributes: {
+    "*": ["class", "lang", "dir", "title"],
+    a: ["href", "name"],
+    img: ["src", "alt", "width", "height"],
+    td: ["colspan", "rowspan"],
+    th: ["colspan", "rowspan", "scope"],
+    ol: ["start", "type"],
+  },
+  allowedSchemes: ["http", "https", "mailto"],
+  allowedSchemesByTag: { img: ["http", "https", "data"] },
+  // 既定の nonTextTags は option も捨てるが、選択肢の文言は残したいので明示する
+  nonTextTags: DROP_WITH_CONTENT,
 };
 
-const COMMENT = /<!--[\s\S]*?-->/g;
-const UNSAFE_ELEMENT = /<(script|style|noscript|template|iframe|object|embed)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
-const UNSAFE_VOID = /<\/?(script|style|noscript|template|iframe|object|embed|link|meta|base)\b[^>]*>/gi;
-// 本物のタグだけに一致させる。`\(x < y\)` のような素の `<` はタグとみなさない
-const TAG = /<\/?[A-Za-z][^>]*>|<![^>]*>|<\?[^>]*>/g;
-const EVENT_ATTR = /\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
-const JS_URL_ATTR = /\s+(href|src|action|formaction|xlink:href)\s*=\s*(["']?)\s*javascript:[^"'\s>]*\2/gi;
+function stripNul(html: string): string {
+  return html.replace(/\u0000/g, "");
+}
 
 export function sanitizeHtml(html: string): string {
-  return html
-    .replace(COMMENT, "")
-    .replace(UNSAFE_ELEMENT, "")
-    .replace(UNSAFE_VOID, "")
-    .replace(/<[A-Za-z][^>]*>/g, (tag) => tag.replace(EVENT_ATTR, "").replace(JS_URL_ATTR, ""));
+  return sanitize(stripNul(html), SANITIZE_OPTIONS);
 }
 
 export function htmlToText(html: string): string {
-  return decodeEntities(
-    html
-      .replace(COMMENT, " ")
-      .replace(UNSAFE_ELEMENT, " ")
-      .replace(TAG, " "),
-  )
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function decodeEntities(s: string): string {
-  return s.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (m, body: string) => {
-    if (body[0] === "#") {
-      const code =
-        body[1] === "x" || body[1] === "X" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
-      // NUL・サロゲート単体は D1 に入れると壊れるので捨てる
-      if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return " ";
-      return String.fromCodePoint(code);
-    }
-    return NAMED_ENTITIES[body.toLowerCase()] ?? m;
-  });
+  const out: string[] = [];
+  let skipDepth = 0;
+  const parser = new Parser(
+    {
+      onopentagname(name) {
+        if (DROP_WITH_CONTENT.includes(name)) skipDepth++;
+        out.push(" ");
+      },
+      onclosetag(name) {
+        if (DROP_WITH_CONTENT.includes(name)) skipDepth = Math.max(0, skipDepth - 1);
+        out.push(" ");
+      },
+      ontext(text) {
+        if (skipDepth === 0) out.push(text);
+      },
+    },
+    { decodeEntities: true, lowerCaseTags: true },
+  );
+  parser.write(stripNul(html));
+  parser.end();
+  return out.join("").replace(/\s+/g, " ").trim();
 }

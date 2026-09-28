@@ -160,6 +160,10 @@ export async function run(argv: string[]): Promise<number> {
     addJsonl(manifest, path.basename(file), await readFile(file, "utf8"));
   }
   const aliases = await loadAliases(opts.aliases);
+  if (aliases?.size === 0) {
+    // ファイルが正本なので空なら全コースの別名が消える。意図した操作でもありうるので止めずに警告だけ出す
+    emit({ event: "warning", reason: "aliases file is empty; all course aliases will be cleared" });
+  }
   for (const r of manifest.rejected) {
     emit({ event: "rejected", source: r.source, line: r.line, reason: r.reason });
   }
