@@ -7,8 +7,20 @@
 //! 詳細: ../../DESIGN.md 「データ収集ラッパー設計」
 
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use collect::error::CollectError;
+use collect::pdf;
+use collect::{Collect, Credentials, Course, Lecture, LecturePage, SlideContent, Year};
+use futures::future;
+use reqwest::Client;
+use std::future::Future;
+use serde_json::json;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::Arc;
+use std::time::Duration;
+
+mod contract_ids;
+use contract_ids::{course_code, lecture_number, rel_pdf_path};
 
 /// 対話プロンプトを一切出さない非対話収集 CLI
 #[derive(Debug, Parser)]
@@ -29,13 +41,13 @@ struct Cli {
     #[arg(long, conflicts_with = "course")]
     all: bool,
 
-    /// コースコード (例: INI201)
+    /// 対象コース（slug / コード / 名前の部分一致。例: INI201）。出力 CODE は slug から導出
     #[arg(long, conflicts_with = "all")]
     course: Option<String>,
 
-    /// レクチャー番号。省略時は該当コース全件
+    /// 対象レクチャー（slug / 番号 / 名前の部分一致）。出力 LL は slug 先頭数字 or index+1
     #[arg(long)]
-    lecture: Option<u32>,
+    lecture: Option<String>,
 
     /// 障害時リトライ回数
     #[arg(long, default_value_t = 3)]
@@ -49,39 +61,234 @@ struct Cli {
     #[arg(long)]
     quiet: bool,
 
-    /// Netscape / JSON Cookie ジャー
-    #[arg(long, env = "MOOCS_COOKIE_JAR")]
-    cookie_jar: Option<PathBuf>,
+    /// Moocs / Google のユーザー名（学籍番号）
+    #[arg(long, env = "MOOCS_USERNAME")]
+    username: Option<String>,
 
-    /// セッション Cookie 文字列 (CI 向け)
-    #[arg(long, env = "MOOCS_SESSION_COOKIE")]
-    session_cookie: Option<String>,
+    /// パスワード（CI では Secrets から）
+    #[arg(long, env = "MOOCS_PASSWORD")]
+    password: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// ローカル用: ブラウザでログインして Cookie を保存する
-    Login {
-        /// Cookie 保存先
-        #[arg(long)]
-        out: PathBuf,
-    },
+    /// 認証のみ確認する（収集しない）
+    AuthCheck,
 }
 
-/// 対話入力を要求される呼び出しは exit code 2 で失敗させる
 const EXIT_USAGE: u8 = 2;
 const EXIT_RUNTIME: u8 = 1;
 
-fn main() -> ExitCode {
-    let cli = Cli::parse();
+fn emit(json_mode: bool, quiet: bool, event: serde_json::Value, human: &str) {
+    if json_mode {
+        println!("{}", event);
+    } else if !quiet {
+        eprintln!("{human}");
+    }
+}
 
-    if let Some(Command::Login { out }) = &cli.command {
-        eprintln!("login は未実装です（Phase 1）。保存先: {}", out.display());
-        return ExitCode::from(EXIT_RUNTIME);
+fn out_pdf_path(root: &Path, year: u32, code: &str, lecture_no: u32) -> PathBuf {
+    root.join(year.to_string())
+        .join(code)
+        .join(format!("{lecture_no:02}"))
+        .join("slides.pdf")
+}
+
+fn matches_course(course: &Course, needle: &str) -> bool {
+    let n = needle.to_lowercase();
+    course.key.slug.value().to_lowercase().contains(&n)
+        || course.name.to_lowercase().contains(&n)
+        || course.display_name().to_lowercase().contains(&n)
+}
+
+fn matches_lecture(lecture: &Lecture, needle: &str) -> bool {
+    // 数字指定は LL と厳密一致（"2" が "第12回" に部分一致しないように）
+    if let Ok(n) = needle.trim().parse::<u32>() {
+        return lecture_number(lecture.key.slug.value(), lecture.index).ok() == Some(n);
+    }
+    let n = needle.to_lowercase();
+    lecture.key.slug.value().to_lowercase().contains(&n)
+        || lecture.display_name().to_lowercase().contains(&n)
+}
+
+async fn with_retries<T, F, Fut>(retries: u32, mut op: F) -> Result<T, CollectError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, CollectError>>,
+{
+    let mut attempt = 0;
+    loop {
+        match op().await {
+            Ok(v) => return Ok(v),
+            Err(e) if attempt < retries => {
+                attempt += 1;
+                let wait = Duration::from_secs(2u64.pow(attempt));
+                eprintln!("retry {attempt}/{retries} after {wait:?}: {e}");
+                tokio::time::sleep(wait).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+async fn save_lecture_slides(
+    collect: &Collect,
+    client: &Client,
+    year: u32,
+    course_code: &str,
+    lecture_no: u32,
+    lecture: &Lecture,
+    course_name: &str,
+    root: &Path,
+    json: bool,
+    quiet: bool,
+    retries: u32,
+) -> Result<PathBuf, anyhow::Error> {
+    let pages: Vec<LecturePage> = with_retries(retries, || {
+        collect.get_pages(&lecture.key)
+    })
+    .await?;
+
+    let mut contents: Vec<SlideContent> = Vec::new();
+    for page in &pages {
+        let slides = with_retries(retries, || collect.get_slides(&page.key)).await?;
+        if slides.is_empty() {
+            continue;
+        }
+        let page_contents = future::join_all(slides.iter().map(|slide| collect.get_slide_content(slide)))
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        contents.extend(page_contents);
     }
 
-    // 対話プロンプトの代わりに、必須パラメータ不足は即エラーにする
-    let (Some(year), Some(path)) = (cli.year, cli.path.as_ref()) else {
+    let rel = rel_pdf_path(year, course_code, lecture_no);
+    let out = out_pdf_path(root, year, course_code, lecture_no);
+
+    if contents.is_empty() {
+        emit(
+            json,
+            quiet,
+            json!({
+                "event": "skip",
+                "year": year,
+                "course": course_code,
+                "lecture": lecture_no,
+                "reason": "no_slides",
+            }),
+            "skip: no slides",
+        );
+        return Ok(out);
+    }
+
+    let preprocessor = pdf::PreProcessor::default();
+    let mut all_svgs = Vec::new();
+    for content in &contents {
+        let pre = preprocessor.preprocess(client, content).await?;
+        all_svgs.extend(pre.svgs);
+    }
+
+    // 1 レクチャー = 1 PDF（全ページ SVG を連結して convert）
+    let combined = SlideContent::new(contents[0].page_key.clone(), all_svgs);
+    let mut doc = pdf::convert(&combined)?;
+
+    if let Some(dir) = out.parent() {
+        tokio::fs::create_dir_all(dir).await?;
+    }
+    doc.save(&out)?;
+
+    let pages_count = doc.get_pages().len();
+    // 固定契約（DESIGN / PR #4 ingest）:
+    //   file は out/ からの相対パス `{year}/{CODE}/{LL:02}/slides.pdf`
+    //   course は CODE、lecture は数値
+    //   course_name / lecture_title は任意（PR #4 が ingest で取り込む）
+    emit(
+        json,
+        quiet,
+        json!({
+            "event": "done",
+            "year": year,
+            "course": course_code,
+            "lecture": lecture_no,
+            "file": rel,
+            "pages": pages_count,
+            "course_name": course_name,
+            "lecture_title": lecture.display_name(),
+        }),
+        &format!("done: {rel}"),
+    );
+    Ok(out)
+}
+
+fn build_client() -> Result<Client, anyhow::Error> {
+    Ok(Client::builder()
+        .user_agent("collect-headless/0.1 (INIAD Moocs MCP; +https://github.com/s1f10240260/iniad-moocs-mcp)")
+        .cookie_store(true)
+        .build()?)
+}
+
+async fn login(collect: &Collect, cli: &Cli) -> Result<(), anyhow::Error> {
+    let (Some(username), Some(password)) = (cli.username.as_ref(), cli.password.as_ref()) else {
+        eprintln!(
+            "error: 認証情報がありません。MOOCS_USERNAME / MOOCS_PASSWORD（または --username / --password）を指定してください"
+        );
+        std::process::exit(i32::from(EXIT_USAGE));
+    };
+
+    let credentials = Credentials::new(username, password);
+    match with_retries(cli.retries, || collect.authenticate(&credentials)).await {
+        Ok(()) => {
+            emit(
+                cli.json,
+                cli.quiet,
+                json!({"event": "auth_ok"}),
+                "auth: ok",
+            );
+            Ok(())
+        }
+        Err(CollectError::Authentication { reason }) => {
+            emit(
+                cli.json,
+                cli.quiet,
+                json!({"event": "error", "code": "auth_expired", "message": reason}),
+                &format!("auth failed: {reason}"),
+            );
+            Err(anyhow::anyhow!("auth failed: {reason}"))
+        }
+        Err(e) => {
+            emit(
+                cli.json,
+                cli.quiet,
+                json!({"event": "error", "code": "auth_error", "message": e.to_string()}),
+                &format!("auth error: {e}"),
+            );
+            Err(e.into())
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    let cli = Cli::parse();
+
+    let client = match build_client() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(EXIT_RUNTIME);
+        }
+    };
+    let collect = Collect::from(Arc::new(client));
+
+    // auth-check: 認証のみ（--year / --path 不要）
+    if matches!(cli.command, Some(Command::AuthCheck)) {
+        return match login(&collect, &cli).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::from(EXIT_RUNTIME),
+        };
+    }
+
+    let (Some(year_raw), Some(path)) = (cli.year, cli.path.as_ref()) else {
         eprintln!("error: --year と --path は必須です（対話入力は行いません）");
         return ExitCode::from(EXIT_USAGE);
     };
@@ -91,41 +298,182 @@ fn main() -> ExitCode {
         return ExitCode::from(EXIT_USAGE);
     }
 
-    if cli.session_cookie.is_none() && cli.cookie_jar.is_none() {
-        eprintln!(
-            "error: 認証情報がありません。MOOCS_SESSION_COOKIE か --cookie-jar を指定してください"
-        );
-        return ExitCode::from(EXIT_USAGE);
+    let year = match Year::new(year_raw as u32) {
+        Ok(y) => y,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(EXIT_USAGE);
+        }
+    };
+
+    let client = match build_client() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("error: {e}");
+            return ExitCode::from(EXIT_RUNTIME);
+        }
+    };
+    let http = client.clone();
+    let collect = Collect::from(Arc::new(client));
+
+    if let Err(_e) = login(&collect, &cli).await {
+        return ExitCode::from(EXIT_RUNTIME);
     }
 
-    // TODO(phase-1): collect crate で非対話収集を実行する
-    // 現状は CLI 契約（フラグ / exit code / JSON 進捗）の骨格のみ
-    let plan = format!(
-        "collect year={year} path={} all={} course={:?} lecture={:?} retries={}",
-        path.display(),
-        cli.all,
-        cli.course,
-        cli.lecture,
-        cli.retries
+    let courses: Vec<Course> = match with_retries(cli.retries, || collect.get_courses(Some(year.clone()))).await {
+        Ok(c) => c,
+        Err(e) => {
+            emit(
+                cli.json,
+                cli.quiet,
+                json!({"event": "error", "code": "list_courses", "message": e.to_string()}),
+                &format!("error: {e}"),
+            );
+            return ExitCode::from(EXIT_RUNTIME);
+        }
+    };
+
+    let selected: Vec<&Course> = courses
+        .iter()
+        .filter(|c| cli.all || cli.course.as_deref().is_some_and(|n| matches_course(c, n)))
+        .collect();
+
+    if selected.is_empty() {
+        eprintln!("error: 条件に合うコースがありません");
+        return ExitCode::from(EXIT_RUNTIME);
+    }
+
+    let mut ok = 0usize;
+    let mut failed = 0usize;
+
+    for course in selected {
+        let code = match course_code(course.key.slug.value()) {
+            Ok(c) => c,
+            Err(e) => {
+                failed += 1;
+                emit(
+                    cli.json,
+                    cli.quiet,
+                    json!({
+                        "event": "error",
+                        "year": year.value(),
+                        "course": course.key.slug.value(),
+                        "code": "invalid_course_code",
+                        "message": e.to_string(),
+                    }),
+                    &format!("error course code: {e}"),
+                );
+                continue;
+            }
+        };
+        let course_name = course.display_name().to_string();
+
+        let lectures: Vec<Lecture> = match with_retries(cli.retries, || {
+            collect.get_lectures(&course.key)
+        })
+        .await
+        {
+            Ok(l) => l,
+            Err(e) => {
+                failed += 1;
+                emit(
+                    cli.json,
+                    cli.quiet,
+                    json!({
+                        "event": "error",
+                        "year": year.value(),
+                        "course": code,
+                        "code": "list_lectures",
+                        "message": e.to_string(),
+                    }),
+                    &format!("error lectures: {e}"),
+                );
+                continue;
+            }
+        };
+
+        for lecture in lectures
+            .iter()
+            .filter(|l| cli.lecture.as_deref().is_none_or(|n| matches_lecture(l, n)))
+        {
+            let lecture_no = match lecture_number(lecture.key.slug.value(), lecture.index) {
+                Ok(n) => n,
+                Err(e) => {
+                    failed += 1;
+                    emit(
+                        cli.json,
+                        cli.quiet,
+                        json!({
+                            "event": "error",
+                            "year": year.value(),
+                            "course": code,
+                            "code": "invalid_lecture_number",
+                            "message": e.to_string(),
+                        }),
+                        &format!("error lecture number: {e}"),
+                    );
+                    continue;
+                }
+            };
+
+            emit(
+                cli.json,
+                cli.quiet,
+                json!({
+                    "event": "start",
+                    "year": year.value(),
+                    "course": code,
+                    "lecture": lecture_no,
+                }),
+                &format!("start {}/{}/{:02}", year.value(), code, lecture_no),
+            );
+
+            match save_lecture_slides(
+                &collect,
+                &http,
+                year.value(),
+                &code,
+                lecture_no,
+                lecture,
+                &course_name,
+                path,
+                cli.json,
+                cli.quiet,
+                cli.retries,
+            )
+            .await
+            {
+                Ok(_) => ok += 1,
+                Err(e) => {
+                    failed += 1;
+                    emit(
+                        cli.json,
+                        cli.quiet,
+                        json!({
+                            "event": "error",
+                            "year": year.value(),
+                            "course": code,
+                            "lecture": lecture_no,
+                            "code": "collect_failed",
+                            "message": e.to_string(),
+                        }),
+                        &format!("error: {e}"),
+                    );
+                }
+            }
+        }
+    }
+
+    emit(
+        cli.json,
+        cli.quiet,
+        json!({"event": "summary", "ok": ok, "failed": failed}),
+        &format!("summary ok={ok} failed={failed}"),
     );
 
-    if cli.json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "event": "planned",
-                "year": year,
-                "path": path,
-                "all": cli.all,
-                "course": cli.course,
-                "lecture": cli.lecture,
-                "note": "implementation pending — see docs/ROADMAP.md Phase 1",
-            })
-        );
-    } else if !cli.quiet {
-        eprintln!("{plan}");
-        eprintln!("collect-headless: 実装は Phase 1（docs/ROADMAP.md）");
+    if failed > 0 {
+        ExitCode::from(EXIT_RUNTIME)
+    } else {
+        ExitCode::SUCCESS
     }
-
-    ExitCode::SUCCESS
 }
