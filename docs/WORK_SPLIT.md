@@ -55,12 +55,12 @@
 
 ### Phase 3: データ基盤（`db/`, アップロード）
 
-- [ ] `db/schema.sql` を実 D1 / ローカル D1 に適用し、FTS5 trigram の日本語部分一致を検証
-- [ ] `courses` / `lectures` / `contents` の upsert スクリプト（冪等）
+- [ ] `db/migrations/` を実 D1 / ローカル D1 に適用し、FTS5 の日本語部分一致を検証（アプリ側バイグラムに変更。ローカル済み・実 D1 未）
+- [x] `courses` / `lectures` / `contents` の upsert スクリプト（冪等）→ [INGEST.md](INGEST.md)
   - 入力: A の `out/` レイアウト + JSONL
   - R2 キー: `{year}/{course}/{lecture}/slides.pdf`
-- [ ] FTS テーブルへの同期（本体 or トリガー方針を決めて実装）
-- [ ] 再実行で二重登録されないことのテスト
+- [x] FTS テーブルへの同期（external content + トリガー）
+- [x] 再実行で二重登録されないことのテスト（`npm run test:integration`）
 
 **完了条件:** サンプル 1 コース分がローカル D1 + R2 mock に入り、SQL で検索できる
 

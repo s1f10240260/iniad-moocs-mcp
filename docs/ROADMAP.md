@@ -76,14 +76,14 @@
 
 **場所:** `db/`, アップロードスクリプト
 
-1. D1 スキーマ: `courses` / `lectures` / `contents` + FTS5 (trigram)
+1. D1 スキーマ: `courses` / `lectures` / `contents` + FTS5（アプリ側バイグラム）
 2. R2 キー: `{year}/{course}/{lecture}/slides.pdf`
 3. 収集物の upsert スクリプト（冪等）
 4. ローカル D1（wrangler d1）での差分確認
 
 ### 検証
 
-- [ ] trigram で日本語部分一致検索が通る
+- [ ] 日本語部分一致検索が通る（2 文字・1 文字含む）
 - [ ] 再実行で二重登録されない
 
 **完了条件:** ローカル / staging D1 に実データが入る

@@ -9,6 +9,7 @@ compatibility_date = "2026-09-01"
 binding = "DB"
 database_name = "moocs-mcp"
 database_id = "REPLACE_ME"
+migrations_dir = "../db/migrations"
 
 [[r2_buckets]]
 binding = "SLIDES"

@@ -6,15 +6,26 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
-    "db:local": "wrangler d1 execute moocs-mcp --local --file=../db/schema.sql"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "db:local": "wrangler d1 migrations apply moocs-mcp --local",
+    "db:remote": "wrangler d1 migrations apply moocs-mcp --remote",
+    "ingest": "tsx ingest/main.ts",
+    "ingest:fixture": "tsx ingest/main.ts --out ../tests/fixtures/sample-out --jsonl ../tests/fixtures/sample-out/collect-slides.jsonl --jsonl ../tests/fixtures/sample-out/collect-contents.jsonl --aliases ../tests/fixtures/sample-out/aliases.json",
+    "test": "vitest run test/unit",
+    "test:integration": "vitest run test/integration"
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20250901.0",
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/sanitize-html": "^2.16.1",
+    "htmlparser2": "^10.1.0",
+    "sanitize-html": "^2.17.5",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.0",
-    "wrangler": "^3.80.0"
+    "vitest": "^4.1.11",
+    "wrangler": "^4.86.0"
   }
 }
