@@ -388,13 +388,15 @@ collect-headless --year 2026 --path ./out --course INI201 --lecture 2 --json
 
 **認証（ヘッドレス）:**
 
+現行 `collect` crate（`Credentials` / `authenticate`）が **ユーザー名 + パスワード** のみ受け付けるため、Cookie ジャー方式は使わない。
+
 | 方式 | 用途 | 備考 |
 |------|------|------|
-| 環境変数 `MOOCS_SESSION_COOKIE` | CI | 保存済みセッション Cookie を注入 |
-| `--cookie-jar <path>` | CI | Netscape / JSON Cookie ジャーを読み込み |
-| インタラクティブログイン | ローカルのみ | `collect-headless login` サブコマンドでブラウザ起動し、Cookie を保存 |
+| 環境変数 `MOOCS_USERNAME` / `MOOCS_PASSWORD` | CI | Secrets から注入。ログ・JSONL に出さない |
+| `--username` / `--password` | ローカル | 環境変数と同じ |
+| `collect-headless auth-check` | 疎通確認 | 収集せず認証のみ（成功 0 / 失敗 1） |
 
-Google (SAML) セッションは有効期限があるため、失効時は Workflow を fail し、手動で Cookie を更新する運用とする。
+Google (SAML) / Moocs セッションは実行ごとに認証して再取得する。失効時は Workflow を fail し、Secrets を更新する運用とする。
 
 **出力レイアウト:**
 
@@ -408,9 +410,12 @@ out/
 
 **JSON 進捗例:**
 
+`course` は CODE（`[A-Za-z0-9_-]{1,32}`）、`lecture` は数値、`file` は `out/` からの相対パス。
+`course_name` / `lecture_title` は任意（無い場合は省略可。取り込み側は既存値を上書きしない）。
+
 ```json
 {"event":"start","year":2026,"course":"INI201","lecture":2}
-{"event":"done","year":2026,"course":"INI201","lecture":2,"file":"2026/INI201/02/slides.pdf","pages":42}
+{"event":"done","year":2026,"course":"INI201","lecture":2,"file":"2026/INI201/02/slides.pdf","pages":42,"course_name":"データサイエンス基礎","lecture_title":"第2回 確率分布とKLダイバージェンス"}
 {"event":"error","year":2026,"course":"XXX999","lecture":1,"code":"auth_expired","message":"..."}
 ```
 

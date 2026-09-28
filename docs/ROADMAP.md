@@ -3,7 +3,7 @@
 設計の詳細は [../DESIGN.md](../DESIGN.md) を参照。
 本ドキュメントは実装の着手順と完了条件を定義する。
 
-2 名体制の担当は [WORK_SPLIT.md](WORK_SPLIT.md) を参照（A = Collector / B = Cloud・MCP）。
+担当は [WORK_SPLIT.md](WORK_SPLIT.md) を参照（s1f10240260 = Collector / s1F10240055 = Cloud・MCP）。
 
 ## 前提（確定事項）
 

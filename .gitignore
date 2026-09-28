@@ -35,3 +35,8 @@ __pycache__/
 Thumbs.db
 .idea/
 .vscode/
+
+# local credentials (never commit)
+secrets.local.ps1
+secrets.local.*
+
