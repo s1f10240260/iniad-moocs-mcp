@@ -1,51 +1,37 @@
-# 仕事割り振り
+# 仕事割り振り（2名体制）
 
 前提・全体設計は [../DESIGN.md](../DESIGN.md)、フェーズ定義は [ROADMAP.md](ROADMAP.md)。
 
-## 決定済みアサイン
+## ざっくりした切り方
 
 **データ収集** と **クラウド配信** で分ける。インターフェース（出力パス・ID 体系・スキーマ）は先に固定してあるので、以降は並行して進められる。
 
-| | s1f10240260（リード） | s1F10240055 |
-|--|---------------------|-------------|
-| **役割** | **Collector 側** | **Cloud / MCP 側** |
+| | メンバー A（あなた） | メンバー B |
+|--|-------------------|-----------|
+| **役割** | Collector 側 | Cloud / MCP 側 |
 | **担当** | Phase 1–2 | Phase 3–4 |
 | **共同** | Phase 5（GitHub Actions 本番投入） | |
 | **主言語** | Rust / Python | TypeScript / SQL |
 | **成果物** | `out/` 配下のスライド PDF・クイズ HTML | D1 + R2 + Workers MCP |
 
-### 観察者（開発参加なし）
-
-| GitHub | 状態 |
-|--------|------|
-| [Yuji181181](https://github.com/Yuji181181) | **ウォッチのみ** — コード変更・Issue 担当なし |
-| [Ryosuke-Asano](https://github.com/Ryosuke-Asano) | **ウォッチのみ** — コード変更・Issue 担当なし |
-
-- **実装・PR・Issue 担当はしない**（ウォッチ / コメントのみ）
-- 権限は個人リポジトリの制約で write 表示だが、**push しないこと**
-- 進捗確認や議論へのコメントは歓迎。実装タスクは #1 / #2 の 2 名に集約
-
-境界（ID 体系・`out/` パス・JSONL・exit code）は変更しない。
+技術的な得意不得意があれば **A ↔ B の入替可**。境界だけは守る。
 
 ---
 
-## s1f10240260 — Collector（Phase 1–2）
+## メンバー A — Collector（Phase 1–2）
 
 ### Phase 1: `collect-headless`（`collector/slides/`）
 
-- [x] `collect` crate の public API 調査（`lib.rs` / `service` / `repository`）
-- [x] 依存ピン（git tag or commit）して Cargo が解決することを確認（`2ed9a33`）
-- [x] 非対話 CLI の実装（`src/main.rs`）
+- [ ] `collect` crate の public API 調査（`lib.rs` / `service` / `repository`）
+- [ ] 依存ピン（git tag or commit）して Cargo が解決することを確認
+- [ ] 非対話 CLI の実装（骨格は `src/main.rs` にあり）
   - `--year` / `--path` / `--all` / `--course` / `--lecture` / `--retries` / `--json`
   - **対話プロンプト禁止**。不足は exit code `2`
-- [x] ヘッドレス認証（現行 `collect` crate はユーザー名 + パスワードのみ）
-  - `MOOCS_USERNAME` / `MOOCS_PASSWORD`（または `--username` / `--password`）
-  - `auth-check` サブコマンド（認証のみ疎通確認）
-  - ※ Cookie ジャーは crate 非対応のため不採用（DESIGN を更新）
-- [x] 出力契約: `out/{year}/{CODE}/{LL:02}/slides.pdf` + JSONL（`course`=CODE / `lecture`=数値 / `file`=相対）
-- [ ] 1 レクチャー PDF 生成の E2E（実アカウント）
-- [x] リトライ（指数バックオフ）→ スキップ → JSON Lines サマリ
-- [ ] `cargo test` 実行（ヘルパー単体テスト追加済み。実行には `dlltool` 必要）
+- [ ] ヘッドレス認証
+  - `MOOCS_SESSION_COOKIE` / `--cookie-jar`
+  - ローカル用 `login` サブコマンド（Cookie 保存）
+- [ ] 1 レクチャー PDF 生成の E2E
+- [ ] リトライ 3 回 → スキップ → JSON Lines サマリ
 
 **完了条件:** Ubuntu 上で `--all --json` が非対話で完走し、`out/{year}/{COURSE}/{LL}/slides.pdf` が並ぶ
 
@@ -65,16 +51,16 @@
 
 ---
 
-## s1F10240055 — Cloud / MCP（Phase 3–4）
+## メンバー B — Cloud / MCP（Phase 3–4）
 
 ### Phase 3: データ基盤（`db/`, アップロード）
 
-- [ ] `db/schema.sql` を実 D1 / ローカル D1 に適用し、FTS5 trigram の日本語部分一致を検証
-- [ ] `courses` / `lectures` / `contents` の upsert スクリプト（冪等）
+- [ ] `db/migrations/` を実 D1 / ローカル D1 に適用し、FTS5 の日本語部分一致を検証（アプリ側バイグラムに変更。ローカル済み・実 D1 未）
+- [x] `courses` / `lectures` / `contents` の upsert スクリプト（冪等）→ [INGEST.md](INGEST.md)
   - 入力: A の `out/` レイアウト + JSONL
   - R2 キー: `{year}/{course}/{lecture}/slides.pdf`
-- [ ] FTS テーブルへの同期（本体 or トリガー方針を決めて実装）
-- [ ] 再実行で二重登録されないことのテスト
+- [x] FTS テーブルへの同期（external content + トリガー）
+- [x] 再実行で二重登録されないことのテスト（`npm run test:integration`）
 
 **完了条件:** サンプル 1 コース分がローカル D1 + R2 mock に入り、SQL で検索できる
 
@@ -106,7 +92,7 @@
 | スライドパス | `{path}/{year}/{CODE}/{LL}/slides.pdf` |
 | 進捗ログ | JSON Lines（`start` / `done` / `error`） |
 | contents の type | `quiz` \| `assignment` \| `slide` |
-| 認証 env | `MOOCS_USERNAME` / `MOOCS_PASSWORD`（Secrets。平文出力禁止） |
+| 認証 env | `MOOCS_SESSION_COOKIE` / `MOOCS_COOKIE_JAR` |
 | exit code | 成功 0 / 実行時失敗 1 / 引数不足・対話要求 2 |
 
 ### 成果物の受け渡し
@@ -130,10 +116,10 @@ B は A の最終出力レイアウトが固まるまで fixture で開発して
 
 | いつ | 何を決める |
 |------|-----------|
-| 並行開始時点 | ID / パス体系の最終確認 |
-| Collector: Phase 1 E2E 通過時点 | 実 `out/` サンプルを s1F10240055 に渡す |
-| Cloud: Phase 3 upsert 完了時点 | 実データ投入の可否・スキーマ微調整 |
-| Phase 5 手前 | Secrets（Cookie / CF トークン）の持ち方、失敗通知先 |
+| 並行開始時点 | この割りでよいか、ID / パス体系の最終確認 |
+| A: Phase 1 E2E 通過時点 | 実 `out/` サンプルを B に渡す |
+| B: Phase 3 upsert 完了時点 | 実データ投入の可否・スキーマ微調整 |
+| Phase 5 手前 | Secrets（MOOCS_USERNAME / MOOCS_PASSWORD / CF トークン）の持ち方、失敗通知先 |
 
 ---
 
@@ -141,18 +127,19 @@ B は A の最終出力レイアウトが固まるまで fixture で開発して
 
 | リスク | 担当 | 対応 |
 |--------|------|------|
-| `collect` crate API 変更 | s1f10240260 | 依存ピン / フォーク検討 |
-| Google セッション失効 | s1f10240260 | runbook どおり差し替え |
-| Moocs AJAX 変更 | s1f10240260 | fixture 回帰で検知 |
-| D1 / R2 無料枠 | s1F10240055 | 月次容量チェック |
-| Keycloak 認証実装 | s1F10240055 | ローカル疎通 → staging |
+| `collect` crate API 変更 | A | 依存ピン / フォーク検討 |
+| Google ログインのブロック・追加確認 | A | Phase 5 前に Actions で uth-check 疎通確認 / Secrets 更新 |
+| Moocs AJAX 変更 | A | fixture 回帰で検知 |
+| D1 / R2 無料枠 | B | 月次容量チェック |
+| Keycloak 認証実装 | B | ローカル疎通 → staging |
 | 著作権（PDF を git に入れない） | 両者 | `.gitignore` + レビュー |
 
 ---
 
-## 補足
+## 入替用スプリット（スキル都合で A/B を入れ替える場合）
 
-- 開発は **s1f10240260（Collector）+ s1F10240055（Cloud/MCP）の 2 名**
-- Yuji181181 / Ryosuke-Asano は観察のみ（実装・PR はしない運用）
-- GitHub 個人リポジトリの API 制約で、collaborator 権限は write のみ付与可能。**真の read-only が必要なら Org へ移行**（docs/WORK_SPLIT.md の運用ルールで抑止中）
-- 上記は実力向上目的で s1f10240260 が Collector（Rust 側）を希望した結果
+**B が Collector、A が Cloud** なら以下だけ差し替える。境界は同じ。
+
+- A の担当 → Phase 3–4（TypeScript / SQL / MCP）
+- B の担当 → Phase 1–2（Rust / Python / Playwright）
+- Phase 5 は「ビルドと deploy を作った側が主、Cookie を扱う側が副」

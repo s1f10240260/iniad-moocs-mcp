@@ -37,6 +37,5 @@ Thumbs.db
 .vscode/
 
 # local credentials (never commit)
-secrets.local.ps1
 secrets.local.*
 

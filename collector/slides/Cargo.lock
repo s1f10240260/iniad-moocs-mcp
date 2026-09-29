@@ -442,7 +442,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 [[package]]
 name = "collect"
 version = "1.0.2"
-source = "git+https://github.com/yu7400ki/moocs-collect.git#2ed9a33e89ba405b7db33001b03ff4d653b5fe09"
+source = "git+https://github.com/yu7400ki/moocs-collect.git?rev=2ed9a33e89ba405b7db33001b03ff4d653b5fe09#2ed9a33e89ba405b7db33001b03ff4d653b5fe09"
 dependencies = [
  "async-trait",
  "base64",
