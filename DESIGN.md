@@ -408,6 +408,20 @@ out/
             └── slides.pdf
 ```
 
+### 実際の lecture slug 例（2026 / INI201）
+
+`collect` crate の `lecture.key.slug` は URL エンコードされていることがある。
+
+| slug（生） | デコード後 | LL 導出 |
+|---|---|---|
+| `02` | `02` | 2 |
+| `%E7%AC%AC7%E5%9B%9E` | `第7回` | 7 |
+| `Week15` | `Week15` | 15 |
+| `%E7%AC%AC15%E5%9B%9E` | `第15回` | 15（衝突 → スキップ、Issue #7） |
+| `00` / `-00` | — | 1..=999 外 → スキップ |
+
+CODE はコース slug が `[A-Za-z0-9_-]{1,32}` のときだけ使う（例: `INI201`）。
+
 **JSON 進捗例:**
 
 `course` は CODE（`[A-Za-z0-9_-]{1,32}`）、`lecture` は数値、`file` は `out/` からの相対パス。

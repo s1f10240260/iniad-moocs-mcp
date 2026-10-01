@@ -248,6 +248,39 @@ async fn save_lecture_slides(
     Ok(Outcome::Saved)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retries_only_transient_errors() {
+        assert!(is_retryable(&CollectError::Network {
+            message: "x".into(),
+            source: None,
+        }));
+        assert!(is_retryable(&CollectError::Timeout { duration_ms: 1 }));
+        assert!(is_retryable(&CollectError::RateLimit));
+        // 認証失敗を再試行するとロック・不審判定の元になる
+        assert!(!is_retryable(&CollectError::Authentication {
+            reason: "bad password".into(),
+        }));
+        assert!(!is_retryable(&CollectError::NotFound {
+            message: "x".into(),
+        }));
+        assert!(!is_retryable(&CollectError::Parse {
+            message: "x".into(),
+            context: None,
+        }));
+    }
+
+    #[test]
+    fn usage_errors_use_exit_code_2() {
+        // fail() は JSONL を出す。ここでは exit code の対応だけ固定する
+        assert_eq!(EXIT_USAGE, 2);
+        assert_eq!(EXIT_RUNTIME, 1);
+    }
+}
+
 fn build_client() -> Result<Client, anyhow::Error> {
     Ok(Client::builder()
         .user_agent("collect-headless/0.1 (INIAD Moocs MCP; +https://github.com/s1f10240260/iniad-moocs-mcp)")
@@ -334,7 +367,13 @@ async fn main() -> ExitCode {
     if matches!(cli.command, Some(Command::AuthCheck)) {
         return match login(&collect, &cli).await {
             Ok(()) => ExitCode::SUCCESS,
-            Err(e) => fail(cli.json, cli.quiet, "auth_error", &e.to_string(), EXIT_RUNTIME),
+            Err(e) => fail(
+                cli.json,
+                cli.quiet,
+                "auth_error",
+                &e.to_string(),
+                EXIT_RUNTIME,
+            ),
         };
     }
 
@@ -376,7 +415,13 @@ async fn main() -> ExitCode {
     };
 
     if let Err(e) = login(&collect, &cli).await {
-        return fail(cli.json, cli.quiet, "auth_error", &e.to_string(), EXIT_RUNTIME);
+        return fail(
+            cli.json,
+            cli.quiet,
+            "auth_error",
+            &e.to_string(),
+            EXIT_RUNTIME,
+        );
     }
 
     let courses: Vec<Course> =
