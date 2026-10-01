@@ -5,7 +5,8 @@ edition = "2021"
 description = "Non-interactive headless wrapper around moocs-collect for CI batch collection"
 license = "MIT"
 
-# 公弁ECLI ではなくコアライブラリを直接使ぁE# 破壊的変更に備えてコミッチE/ タグでピン留めする
+# 公式 CLI ではなくコアライブラリを直接使う
+# 破壊的変更に備えて rev でピン留めする
 [dependencies]
 collect = { git = "https://github.com/yu7400ki/moocs-collect.git", rev = "2ed9a33e89ba405b7db33001b03ff4d653b5fe09", package = "collect" }
 clap = { version = "4", features = ["derive", "env"] }
@@ -20,4 +21,3 @@ futures = "0.3"
 
 [profile.release]
 lto = true
-

@@ -319,11 +319,22 @@ async fn main() -> ExitCode {
     let http = client.clone();
     let collect = Collect::from(Arc::new(client));
 
+    // 資格情報の欠落は引数不足（exit 2）。黙って終了しない
+    if cli.username.is_none() || cli.password.is_none() {
+        return fail(
+            cli.json,
+            cli.quiet,
+            "usage",
+            "認証情報がありません。MOOCS_USERNAME / MOOCS_PASSWORD（または --username / --password）を指定してください",
+            EXIT_USAGE,
+        );
+    }
+
     // auth-check: 認証のみ（--year / --path 不要）
     if matches!(cli.command, Some(Command::AuthCheck)) {
         return match login(&collect, &cli).await {
             Ok(()) => ExitCode::SUCCESS,
-            Err(_) => ExitCode::from(EXIT_RUNTIME),
+            Err(e) => fail(cli.json, cli.quiet, "auth_error", &e.to_string(), EXIT_RUNTIME),
         };
     }
 
@@ -364,8 +375,8 @@ async fn main() -> ExitCode {
         }
     };
 
-    if let Err(_e) = login(&collect, &cli).await {
-        return ExitCode::from(EXIT_RUNTIME);
+    if let Err(e) = login(&collect, &cli).await {
+        return fail(cli.json, cli.quiet, "auth_error", &e.to_string(), EXIT_RUNTIME);
     }
 
     let courses: Vec<Course> =
@@ -469,27 +480,26 @@ async fn main() -> ExitCode {
             .enumerate()
             .map(|(i, l)| (l.key.slug.value().to_string(), (i + 1) as u32))
             .collect();
-        let (assignments, collided) = assign_lecture_numbers(&entries);
-        for ll in &collided {
-            emit(
-                cli.json,
-                cli.quiet,
-                json!({
-                    "event": "error",
-                    "year": year.value(),
-                    "course": code,
-                    "code": "lecture_id_collision",
-                    "message": format!("LL {ll:02} が衝突したため該当講義をスキップしました"),
-                }),
-                &format!("error: LL {ll:02} collision"),
-            );
-        }
+        let (assignments, _collided) = assign_lecture_numbers(&entries);
 
         for (idx, lecture) in lectures.iter().enumerate() {
             let lecture_no = match &assignments[idx] {
                 Ok(n) => *n,
-                Err(_) => {
-                    // 衝突・導出失敗は既に event を出している。failed には数えない
+                Err(msg) => {
+                    // 導出失敗・衝突も JSONL で残す（何も出さず飛ばさない）
+                    emit(
+                        cli.json,
+                        cli.quiet,
+                        json!({
+                            "event": "error",
+                            "year": year.value(),
+                            "course": code,
+                            "code": "invalid_lecture_number",
+                            "message": msg,
+                            "lecture_slug": lecture.key.slug.value(),
+                        }),
+                        &format!("error lecture id: {msg}"),
+                    );
                     skipped += 1;
                     continue;
                 }

@@ -23,15 +23,15 @@
 ### Phase 1: `collect-headless`（`collector/slides/`）
 
 - [ ] `collect` crate の public API 調査（`lib.rs` / `service` / `repository`）
-- [ ] 依存ピン（git tag or commit）して Cargo が解決することを確認
+- [x] 依存ピン（Cargo.toml に rev = 2ed9a33）して Cargo が解決することを確認
 - [ ] 非対話 CLI の実装（骨格は `src/main.rs` にあり）
   - `--year` / `--path` / `--all` / `--course` / `--lecture` / `--retries` / `--json`
   - **対話プロンプト禁止**。不足は exit code `2`
 - [ ] ヘッドレス認証
   - `MOOCS_SESSION_COOKIE` / `--cookie-jar`
   - ローカル用 `login` サブコマンド（Cookie 保存）
-- [ ] 1 レクチャー PDF 生成の E2E
-- [ ] リトライ 3 回 → スキップ → JSON Lines サマリ
+- [x] 1 レクチャー PDF 生成の E2E
+- [x] リトライ（一時障害のみ）→ スキップ → JSON Lines サマリ
 
 **完了条件:** Ubuntu 上で `--all --json` が非対話で完走し、`out/{year}/{COURSE}/{LL}/slides.pdf` が並ぶ
 
@@ -46,7 +46,7 @@
 
 ### 運用まわり（A 主担当）
 
-- [ ] Cookie 失効時の差し替え runbook（README or docs/）
+- [ ] ログイン失敗・追加確認時の runbook（Secrets 更新、Phase 5 前に Actions で uth-check 疎通確認）
 - [ ] 開発用アカウントでのセッション維持方法の整理
 
 ---

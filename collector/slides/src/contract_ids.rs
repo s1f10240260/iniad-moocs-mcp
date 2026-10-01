@@ -29,10 +29,14 @@ fn is_valid_course_code(s: &str) -> bool {
 }
 
 /// slug 中の最初の数字列。無ければ None。
+///
+/// slug は URL エンコードされていることがある（例: `第7回` → `%E7%AC%AC7%E5%9B%9E`）。
+/// エンコードされた 16 進 (`%E7` の `7`) を数字と誤認しないよう、**デコード後に**探す。
 pub fn first_number(s: &str) -> Option<u32> {
+    let decoded = percent_decode(s);
     let mut digits = String::new();
     let mut started = false;
-    for c in s.chars() {
+    for c in decoded.chars() {
         if c.is_ascii_digit() {
             started = true;
             digits.push(c);
@@ -41,6 +45,29 @@ pub fn first_number(s: &str) -> Option<u32> {
         }
     }
     digits.parse().ok()
+}
+
+/// `%XX` / `%uXXXX` は扱わず、バイト列としての `%XX` のみデコードする
+fn percent_decode(s: &str) -> String {
+    if !s.contains('%') {
+        return s.to_string();
+    }
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = &s[i + 1..i + 3];
+            if let Ok(v) = u8::from_str_radix(hex, 16) {
+                out.push(v);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// 1 件分の LL 候補。slug の数字を優先し、無ければ `fallback`（一覧全体での通し番号）。
@@ -161,6 +188,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![&1, &2, &3]
         );
+    }
+
+    #[test]
+    fn lecture_number_decodes_percent_encoded_slugs() {
+        // 実データの INI201 で見つかったパターン（第7回 の URL エンコード）
+        assert_eq!(
+            lecture_number_candidate("%E7%AC%AC7%E5%9B%9E", 99).unwrap(),
+            7
+        );
+        assert_eq!(
+            lecture_number_candidate("%E7%AC%AC12%E5%9B%9E", 99).unwrap(),
+            12
+        );
+        // エンコード由来の 16 進を拾わない（全員 07 になる事故の回帰）
+        assert_ne!(
+            lecture_number_candidate("%E7%AC%AC9%E5%9B%9E", 99).unwrap(),
+            7
+        );
+        assert_eq!(lecture_number_candidate("02", 9).unwrap(), 2);
     }
 
     #[test]
