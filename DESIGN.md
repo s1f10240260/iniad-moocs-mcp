@@ -393,7 +393,7 @@ collect-headless --year 2026 --path ./out --course INI201 --lecture 2 --json
 | 方式 | 用途 | 備考 |
 |------|------|------|
 | 環境変数 `MOOCS_USERNAME` / `MOOCS_PASSWORD` | CI | Secrets から注入。ログ・JSONL に出さない |
-| `--username` / `--password` | ローカル | 環境変数と同じ |
+| `--username` / `--password` | 非推奨 | プロセス一覧・履歴に残る。env `MOOCS_USERNAME` / `MOOCS_PASSWORD` を使うこと |
 | `collect-headless auth-check` | 疎通確認 | 収集せず認証のみ（成功 0 / 失敗 1） |
 
 Google (SAML) / Moocs セッションは実行ごとに認証して再取得する。失効時は Workflow を fail し、Secrets を更新する運用とする。
