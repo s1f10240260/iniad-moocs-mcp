@@ -5,10 +5,14 @@
 //! - LL: 1..=999（JSONL では数値、パスでは 0 埋め 2 桁）
 //! - スライド相対パス: `{year}/{CODE}/{LL:02}/slides.pdf`
 //!
-//! 導出できない・LL が重複する場合はエラーにし、黙って上書きしない。
+//! LL 割当方針（Issue #7）:
+//! 1. slug 由来の数字（1..=999）を採用
+//! 2. 使えない・衝突する講義は、一覧の通し番号から **最小の空き LL** を振る
+//! 3. それでも振れない場合のみエラー（PDF 上書きはしない）
+
+use std::collections::HashSet;
 
 /// コース CODE。slug 全体が `[A-Za-z0-9_-]{1,32}` のときだけ大文字化して返す。
-/// それ以外（日本語・コロン含みなど）は推測せずエラー。
 pub fn course_code(slug: &str) -> Result<String, String> {
     let upper = slug.to_ascii_uppercase();
     if is_valid_course_code(&upper) {
@@ -47,7 +51,7 @@ pub fn first_number(s: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-/// `%XX` / `%uXXXX` は扱わず、バイト列としての `%XX` のみデコードする
+/// `%XX` をバイト列としてデコードする
 fn percent_decode(s: &str) -> String {
     if !s.contains('%') {
         return s.to_string();
@@ -70,54 +74,73 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// 1 件分の LL 候補。slug の数字を優先し、無ければ `fallback`（一覧全体での通し番号）。
-pub fn lecture_number_candidate(slug: &str, fallback: u32) -> Result<u32, String> {
-    let n = first_number(slug).unwrap_or(fallback);
-    if (1..=999).contains(&n) {
-        Ok(n)
-    } else {
-        Err(format!(
-            "lecture slug {slug:?} から LL（1..=999）を導けません (fallback={fallback})"
-        ))
-    }
+/// slug 由来の LL 候補（1..=999）。無ければ None。
+fn slug_ll(slug: &str) -> Option<u32> {
+    first_number(slug).filter(|n| (1..=999).contains(n))
 }
 
-/// 講義一覧に LL を割り当てる。衝突した LL は **すべて**エラーにして上書きを防ぐ。
+/// 講義一覧に LL を割り当てる（Issue #7 方針）。
 ///
-/// `entries` は (slug, fallback_index) の並び。fallback はコース一覧全体での通し番号
-/// （`get_lectures` の flat 後の位置 + 1）。サイドバー内のグループごとの `index` は使わない。
+/// `entries` は (slug, flat_index) の並び。flat_index は `get_lectures` の flat 後の位置 + 1。
+///
+/// - slug 数字が使える講義はそれを優先（`02` → 2、`第7回` → 7）
+/// - 同じ LL を欲しがる場合は **先勝ち**、後続は最小の空き LL
+/// - slug に数字が無い講義も最小の空き LL
+/// - 空きが無ければ Err（スキップ。上書きはしない）
 pub fn assign_lecture_numbers(entries: &[(String, u32)]) -> (Vec<Result<u32, String>>, Vec<u32>) {
+    let mut used: HashSet<u32> = HashSet::new();
     let mut results: Vec<Result<u32, String>> = Vec::with_capacity(entries.len());
-    let mut used: Vec<(u32, usize)> = Vec::new(); // (ll, first_index)
+    let mut reassigned: Vec<u32> = Vec::new();
 
-    for (i, (slug, fallback)) in entries.iter().enumerate() {
-        match lecture_number_candidate(slug, *fallback) {
-            Ok(ll) => {
-                used.push((ll, i));
+    // Pass 1: slug 数字が一意な講義を先に確定（一覧順 = 先勝ち）
+    let mut pending: Vec<Option<u32>> = Vec::with_capacity(entries.len());
+    for (slug, _) in entries {
+        match slug_ll(slug) {
+            Some(ll) if used.insert(ll) => {
+                pending.push(Some(ll));
                 results.push(Ok(ll));
             }
-            Err(e) => results.push(Err(e)),
-        }
-    }
-
-    // 衝突検出: 同じ LL を使った位置をすべて Err にする
-    let mut counts: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
-    for (ll, i) in &used {
-        counts.entry(*ll).or_default().push(*i);
-    }
-    let mut collided: Vec<u32> = Vec::new();
-    for (ll, idxs) in counts {
-        if idxs.len() > 1 {
-            collided.push(ll);
-            for i in idxs {
-                results[i] = Err(format!(
-                    "lecture LL {ll:02} が複数講義で衝突しています。slug に一意な数字を付けるか、講義を分離してください"
-                ));
+            _ => {
+                pending.push(None);
+                results.push(Ok(0)); // placeholder
             }
         }
     }
-    collided.sort_unstable();
-    (results, collided)
+
+    // Pass 2: 残りに最小の空き LL を振る
+    let mut next = 1u32;
+    for (i, (_, flat_index)) in entries.iter().enumerate() {
+        if pending[i].is_some() {
+            continue;
+        }
+        // 通し番号を起点に空きを探す（自然な番号になりやすい）
+        let mut ll = (*flat_index).clamp(1, 999);
+        while used.contains(&ll) {
+            ll += 1;
+            if ll > 999 {
+                ll = 1;
+            }
+            if ll == (*flat_index).clamp(1, 999) {
+                // 1 周した
+                results[i] = Err(format!(
+                    "lecture slug {:?} に振れる空き LL（1..=999）がありません",
+                    entries[i].0
+                ));
+                break;
+            }
+        }
+        if matches!(results[i], Ok(0)) {
+            used.insert(ll);
+            results[i] = Ok(ll);
+            if Some(ll) != slug_ll(&entries[i].0) {
+                reassigned.push(ll);
+            }
+            let _ = next;
+        }
+    }
+
+    reassigned.sort_unstable();
+    (results, reassigned)
 }
 
 /// 契約どおりの相対パス: `{year}/{CODE}/{LL:02}/slides.pdf`
@@ -138,7 +161,6 @@ mod tests {
 
     #[test]
     fn course_code_rejects_unsafe_or_ambiguous_slugs() {
-        // 推測フォールバックは廃止。混ざった slug は CODE にしない
         assert!(course_code("intro:INI201").is_err());
         assert!(course_code("日本語のみ").is_err());
         assert!(course_code("").is_err());
@@ -147,66 +169,66 @@ mod tests {
 
     #[test]
     fn lecture_number_prefers_slug_digits() {
-        assert_eq!(lecture_number_candidate("02", 9).unwrap(), 2);
-        assert_eq!(lecture_number_candidate("2", 0).unwrap(), 2);
-        assert_eq!(lecture_number_candidate("lecture-03", 0).unwrap(), 3);
-        assert_eq!(lecture_number_candidate("intro", 5).unwrap(), 5);
-        assert!(lecture_number_candidate("0", 0).is_err());
-        assert!(lecture_number_candidate("1000", 0).is_err());
+        assert_eq!(slug_ll("02"), Some(2));
+        assert_eq!(slug_ll("2"), Some(2));
+        assert_eq!(slug_ll("lecture-03"), Some(3));
+        assert_eq!(slug_ll("intro"), None);
+        assert_eq!(slug_ll("0"), None);
+        assert_eq!(slug_ll("1000"), None);
     }
 
     #[test]
-    fn assign_detects_ll_collisions() {
-        // グループ分割で index が振り直されても、fallback は一覧全体の通し番号を使う
+    fn assign_keeps_slug_ll_when_unique() {
         let entries = vec![
-            ("intro".to_string(), 1),
+            ("02".to_string(), 1),
+            ("Week3".to_string(), 2),
+            ("%E7%AC%AC7%E5%9B%9E".to_string(), 3),
+        ];
+        let (results, reassigned) = assign_lecture_numbers(&entries);
+        assert!(reassigned.is_empty());
+        assert_eq!(results[0].as_ref().unwrap(), &2);
+        assert_eq!(results[1].as_ref().unwrap(), &3);
+        assert_eq!(results[2].as_ref().unwrap(), &7);
+    }
+
+    #[test]
+    fn assign_reassigns_collisions_to_free_ll() {
+        // 第15回 と Week15 がともに 15 を希望 → 先勝ちで 15、後続は空き 16
+        let entries = vec![
+            ("%E7%AC%AC15%E5%9B%9E".to_string(), 15),
+            ("Week15".to_string(), 16),
+        ];
+        let (results, reassigned) = assign_lecture_numbers(&entries);
+        assert_eq!(results[0].as_ref().unwrap(), &15);
+        assert_eq!(results[1].as_ref().unwrap(), &16);
+        assert_eq!(reassigned, vec![16]);
+    }
+
+    #[test]
+    fn assign_fills_numbers_for_slugs_without_digits() {
+        let entries = vec![
+            ("00".to_string(), 1),
             ("02".to_string(), 2),
-            ("02-extra".to_string(), 3), // slug 数字 02 と衝突
-            ("wrap".to_string(), 4),
+            ("-00".to_string(), 8),
         ];
-        let (results, collided) = assign_lecture_numbers(&entries);
-        assert_eq!(collided, vec![2]);
-        assert!(results[0].is_ok()); // 1
-        assert!(results[1].is_err()); // 02
-        assert!(results[2].is_err()); // 02-extra
-        assert_eq!(results[3].as_ref().unwrap(), &4);
+        let (results, _) = assign_lecture_numbers(&entries);
+        assert_eq!(results[0].as_ref().unwrap(), &1);
+        assert_eq!(results[1].as_ref().unwrap(), &2);
+        assert_eq!(results[2].as_ref().unwrap(), &8);
     }
 
     #[test]
-    fn assign_uses_fallback_when_slug_has_no_digits() {
+    fn assign_detects_ll_collisions_when_no_free_slot() {
+        // 1..=2 を両方使った状態で 3 つ目は空きがあるので成功するケースの対比
         let entries = vec![
-            ("intro".to_string(), 1),
-            ("advanced".to_string(), 2),
-            ("workshop".to_string(), 3),
+            ("01".to_string(), 1),
+            ("01".to_string(), 2),
+            ("01".to_string(), 3),
         ];
-        let (results, collided) = assign_lecture_numbers(&entries);
-        assert!(collided.is_empty());
-        assert_eq!(
-            results
-                .iter()
-                .map(|r| r.as_ref().unwrap())
-                .collect::<Vec<_>>(),
-            vec![&1, &2, &3]
-        );
-    }
-
-    #[test]
-    fn lecture_number_decodes_percent_encoded_slugs() {
-        // 実データの INI201 で見つかったパターン（第7回 の URL エンコード）
-        assert_eq!(
-            lecture_number_candidate("%E7%AC%AC7%E5%9B%9E", 99).unwrap(),
-            7
-        );
-        assert_eq!(
-            lecture_number_candidate("%E7%AC%AC12%E5%9B%9E", 99).unwrap(),
-            12
-        );
-        // エンコード由来の 16 進を拾わない（全員 07 になる事故の回帰）
-        assert_ne!(
-            lecture_number_candidate("%E7%AC%AC9%E5%9B%9E", 99).unwrap(),
-            7
-        );
-        assert_eq!(lecture_number_candidate("02", 9).unwrap(), 2);
+        let (results, _) = assign_lecture_numbers(&entries);
+        let lls: Vec<u32> = results.iter().map(|r| *r.as_ref().unwrap()).collect();
+        let set: HashSet<u32> = lls.iter().copied().collect();
+        assert_eq!(set.len(), 3, "LL must be unique: {lls:?}");
     }
 
     #[test]
@@ -216,5 +238,12 @@ mod tests {
             rel_pdf_path(2026, "INI201", 10),
             "2026/INI201/10/slides.pdf"
         );
+    }
+
+    #[test]
+    fn lecture_number_decodes_percent_encoded_slugs() {
+        assert_eq!(slug_ll("%E7%AC%AC7%E5%9B%9E"), Some(7));
+        assert_eq!(slug_ll("%E7%AC%AC12%E5%9B%9E"), Some(12));
+        assert_ne!(slug_ll("%E7%AC%AC9%E5%9B%9E"), Some(7));
     }
 }
