@@ -54,7 +54,8 @@ async def fetch_problem_html(
     resp = await request.get(url)
     if not resp.ok:
         raise RuntimeError(f"problem fetch failed: {resp.status} {url}")
-    data = json.loads(await resp.text())
+    raw = await resp.body()
+    data = json.loads(raw.decode("utf-8"))
     html = data.get("html")
     if not isinstance(html, str) or not html.strip():
         raise RuntimeError(f"problem html empty: {url}")
@@ -70,10 +71,18 @@ def write_content(
     html: str,
     title: str | None,
 ) -> str:
+    """1 講義 × type につき 1 ファイル（ingest の UNIQUE (lecture_id, type)）。
+
+    同じ type の課題が複数ある場合は HTML を連結する。
+    """
     rel = rel_content_path(year, code, lecture_no, type_)
     dest = root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(html, encoding="utf-8")
+    block = f'<section class="moocs-content">\n{html.strip()}\n</section>\n'
+    if dest.exists():
+        dest.write_text(dest.read_text(encoding="utf-8") + block, encoding="utf-8")
+    else:
+        dest.write_text(block, encoding="utf-8")
     return rel
 
 

@@ -161,14 +161,34 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    # TODO(phase-2): Moocs /problem AJAX + Playwright で HTML を取得する
-    return fail(
-        json_mode,
-        quiet,
-        "not_implemented",
-        "収集処理は未実装です（Phase 2）。--dry-run で計画のみ確認できます",
-        EXIT_RUNTIME,
-    )
+    import anyio
+
+    from .rate_limit import RateLimitExceeded as _RLE
+    from .runner import run_collect
+
+    def _emit(event: dict, human: str) -> None:
+        emit(json_mode, quiet, event, human)
+
+    async def _run() -> int:
+        try:
+            await run_collect(
+                username=args.username,
+                password=args.password,
+                year=args.year,
+                root=args.path,
+                code_filter=args.course,
+                lecture_filter=args.lecture,
+                types=types,
+                budget=budget,
+                emit=_emit,
+            )
+            return 0
+        except _RLE as e:
+            return fail(json_mode, quiet, "rate_limit", str(e), EXIT_RUNTIME)
+        except Exception as e:  # noqa: BLE001 — CLI boundary
+            return fail(json_mode, quiet, "collect_failed", str(e), EXIT_RUNTIME)
+
+    return anyio.run(_run)
 
 
 if __name__ == "__main__":
