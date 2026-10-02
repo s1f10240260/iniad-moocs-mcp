@@ -30,6 +30,9 @@ def classify_assignment(assignment_id: str) -> str:
     low = assignment_id.lower()
     if "quiz" in low:
         return "quiz"
+    # SOF201 など「出席確認 / ミニクイズ」は qNN-1 形式
+    if re.fullmatch(r"q\d+(-\d+)?", low):
+        return "quiz"
     return "assignment"
 
 
