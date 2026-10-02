@@ -40,3 +40,6 @@ Thumbs.db
 
 # contents-collector
 .contents-collector-rate.json
+
+# observed Moocs captures (may contain course content)
+collector/tools/fixtures/
