@@ -12,7 +12,7 @@ from .collect import (
     parse_assignment_urls,
     write_content,
 )
-from .contract import course_code
+from .contract import LectureRef, course_code
 from .rate_limit import DailyBudget
 
 BASE = "https://moocs.iniad.org"
@@ -103,31 +103,26 @@ async def run_collect(
             await page.goto(BASE + course_path, wait_until="networkidle")
             html = await page.content()
             lecture_paths = lecture_links_from_course_html(html, year, code)
-            for lp in lecture_paths:
-                slug_lec = lp.rsplit("/", 1)[-1]
-                if lecture_filter and lecture_filter.isdigit() and slug_lec != lecture_filter:
-                    # LL 数値指定は後で割当と突合するため、いったん全件拾ってから絞る
-                    pass
-                await page.goto(BASE + lp, wait_until="networkidle")
-                lec_html = await page.content()
-                assigns = extract_assignments_from_html(lec_html)
-                # LL: slug の数字を優先（collect-headless と同じ。衝突時は呼び出し側で注意）
-                from .contract import slug_ll
+            # LL は slides / Issue #7 と同じ割当（slug 数字優先、衝突・無効は空き番号）
+            from .contract import assign_lecture_numbers
 
-                ll = slug_ll(slug_lec)
+            refs = [LectureRef(p.rsplit("/", 1)[-1], i + 1) for i, p in enumerate(lecture_paths)]
+            lls, ll_errors = assign_lecture_numbers(refs)
+            for msg in ll_errors:
+                emit(
+                    {"event": "error", "code": "invalid_lecture_number", "course": code, "message": msg},
+                    f"ll: {msg}",
+                )
+            for idx, lp in enumerate(lecture_paths):
+                slug_lec = refs[idx].slug
+                ll = lls[idx]
                 if ll is None:
-                    emit(
-                        {
-                            "event": "error",
-                            "code": "invalid_lecture_number",
-                            "course": code,
-                            "message": f"lecture slug {slug_lec!r} から LL を導けません",
-                        },
-                        f"skip lecture {slug_lec}",
-                    )
                     continue
                 if lecture_filter and lecture_filter.isdigit() and ll != int(lecture_filter):
                     continue
+                await page.goto(BASE + lp, wait_until="networkidle")
+                lec_html = await page.content()
+                assigns = extract_assignments_from_html(lec_html)
                 for ay, ac, aid in assigns:
                     kind = classify_assignment(aid)
                     if kind not in types:
