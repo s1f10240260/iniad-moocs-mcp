@@ -5,6 +5,8 @@
 #   MOOCS_USERNAME / MOOCS_PASSWORD — ログイン（Secrets に置き平文ログに出さない）
 #   CLOUDFLARE_API_TOKEN  — R2 / D1 更新用
 #   CLOUDFLARE_ACCOUNT_ID
+#
+# 初回は course に CODE を指定して 1 コース分だけ流す（contents は 100 回/日制限あり）
 
 name: collect-moocs
 
@@ -17,6 +19,10 @@ on:
         description: "対象年度"
         required: true
         default: "2026"
+      course:
+        description: "コース CODE（空なら --all）"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -50,12 +56,14 @@ jobs:
           MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
         run: |
           YEAR="${{ github.event.inputs.year || '2026' }}"
-          ./collector/slides/target/release/collect-headless \
-            --year "$YEAR" \
-            --path ./out \
-            --all \
-            --json \
-            --retries 3 | tee collect-slides.jsonl
+          COURSE="${{ github.event.inputs.course }}"
+          if [ -n "$COURSE" ]; then
+            ./collector/slides/target/release/collect-headless \
+              --year "$YEAR" --path ./out --course "$COURSE" --json --retries 3 | tee collect-slides.jsonl
+          else
+            ./collector/slides/target/release/collect-headless \
+              --year "$YEAR" --path ./out --all --json --retries 3 | tee collect-slides.jsonl
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -74,11 +82,12 @@ jobs:
           MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
         run: |
           YEAR="${{ github.event.inputs.year || '2026' }}"
-          contents-collector \
-            --year "$YEAR" \
-            --path ./out \
-            --all \
-            --json | tee collect-contents.jsonl
+          COURSE="${{ github.event.inputs.course }}"
+          if [ -n "$COURSE" ]; then
+            contents-collector --year "$YEAR" --path ./out --course "$COURSE" --json | tee collect-contents.jsonl
+          else
+            contents-collector --year "$YEAR" --path ./out --all --json | tee collect-contents.jsonl
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -89,4 +98,4 @@ jobs:
             collect-*.jsonl
           retention-days: 7
 
-      # TODO(phase-3/5): wrangler で R2 / D1 へ反映
+      # TODO: wrangler で R2 / D1 へ反映（Phase 5 以降）
