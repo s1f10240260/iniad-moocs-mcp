@@ -1,0 +1,37 @@
+# Phase 5 前の疎通確認用。実収集は collect.yml。
+# Secrets: MOOCS_USERNAME / MOOCS_PASSWORD
+# まず手動実行 (workflow_dispatch) のみ。通ったら collect.yml の前提に使う。
+
+name: auth-check-moocs
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  auth-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: collector/slides
+
+      - name: Build collect-headless
+        working-directory: collector/slides
+        run: cargo build --release
+
+      - name: auth-check (collect-headless)
+        env:
+          MOOCS_USERNAME: ${{ secrets.MOOCS_USERNAME }}
+          MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
+        run: |
+          ./collector/slides/target/release/collect-headless --json auth-check
