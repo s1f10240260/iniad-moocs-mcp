@@ -38,6 +38,11 @@ Thumbs.db
 .idea/
 .vscode/
 
+# contents-collector
+.contents-collector-rate.json
+
+# observed Moocs captures (may contain course content)
+collector/tools/fixtures/
+
 # local credentials (never commit)
 secrets.local.*
-
