@@ -23,15 +23,15 @@
 ### Phase 1: `collect-headless`（`collector/slides/`）
 
 - [ ] `collect` crate の public API 調査（`lib.rs` / `service` / `repository`）
-- [ ] 依存ピン（git tag or commit）して Cargo が解決することを確認
+- [x] 依存ピン（Cargo.toml に rev = 2ed9a33）して Cargo が解決することを確認
 - [ ] 非対話 CLI の実装（骨格は `src/main.rs` にあり）
   - `--year` / `--path` / `--all` / `--course` / `--lecture` / `--retries` / `--json`
   - **対話プロンプト禁止**。不足は exit code `2`
 - [ ] ヘッドレス認証
   - `MOOCS_SESSION_COOKIE` / `--cookie-jar`
   - ローカル用 `login` サブコマンド（Cookie 保存）
-- [ ] 1 レクチャー PDF 生成の E2E
-- [ ] リトライ 3 回 → スキップ → JSON Lines サマリ
+- [x] 1 レクチャー PDF 生成の E2E
+- [x] リトライ（一時障害のみ）→ スキップ → JSON Lines サマリ
 
 **完了条件:** Ubuntu 上で `--all --json` が非対話で完走し、`out/{year}/{COURSE}/{LL}/slides.pdf` が並ぶ
 
@@ -46,7 +46,7 @@
 
 ### 運用まわり（A 主担当）
 
-- [ ] Cookie 失効時の差し替え runbook（README or docs/）
+- [ ] ログイン失敗・追加確認時の runbook（Secrets 更新、Phase 5 前に Actions で uth-check 疎通確認）
 - [ ] 開発用アカウントでのセッション維持方法の整理
 
 ---
@@ -119,7 +119,7 @@ B は A の最終出力レイアウトが固まるまで fixture で開発して
 | 並行開始時点 | この割りでよいか、ID / パス体系の最終確認 |
 | A: Phase 1 E2E 通過時点 | 実 `out/` サンプルを B に渡す |
 | B: Phase 3 upsert 完了時点 | 実データ投入の可否・スキーマ微調整 |
-| Phase 5 手前 | Secrets（Cookie / CF トークン）の持ち方、失敗通知先 |
+| Phase 5 手前 | Secrets（MOOCS_USERNAME / MOOCS_PASSWORD / CF トークン）の持ち方、失敗通知先 |
 
 ---
 
@@ -128,7 +128,7 @@ B は A の最終出力レイアウトが固まるまで fixture で開発して
 | リスク | 担当 | 対応 |
 |--------|------|------|
 | `collect` crate API 変更 | A | 依存ピン / フォーク検討 |
-| Google セッション失効 | A | runbook どおり差し替え |
+| Google ログインのブロック・追加確認 | A | Phase 5 前に Actions で uth-check 疎通確認 / Secrets 更新 |
 | Moocs AJAX 変更 | A | fixture 回帰で検知 |
 | D1 / R2 無料枠 | B | 月次容量チェック |
 | Keycloak 認証実装 | B | ローカル疎通 → staging |

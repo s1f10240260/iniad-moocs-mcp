@@ -43,3 +43,6 @@ Thumbs.db
 
 # observed Moocs captures (may contain course content)
 collector/tools/fixtures/
+
+# local credentials (never commit)
+secrets.local.*
