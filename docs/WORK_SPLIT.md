@@ -120,6 +120,7 @@ B は A の最終出力レイアウトが固まるまで fixture で開発して
 | A: Phase 1 E2E 通過時点 | 実 `out/` サンプルを B に渡す |
 | B: Phase 3 upsert 完了時点 | 実データ投入の可否・スキーマ微調整 |
 | Phase 5 手前 | Secrets（MOOCS_USERNAME / MOOCS_PASSWORD / CF トークン）の持ち方、失敗通知先 |
+| Phase 5 | Cloudflare: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_DATABASE_ID |
 
 ---
 
