@@ -98,7 +98,7 @@ jobs:
             collect-*.jsonl
           retention-days: 7
 
-      # Phase 5: R2 / D1 へ反映（Cloudflare Secrets 未設定ならスキップ）
+      # Phase 5: ingest to R2 / D1 (skip when CLOUDFLARE secrets are absent)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -117,7 +117,7 @@ jobs:
           CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "CLOUDFLARE_* secrets not set — skip D1/R2, artifact only"
+            echo "CLOUDFLARE_* secrets not set -- skip D1/R2, artifact only"
             exit 0
           fi
           if [ -n "$CLOUDFLARE_DATABASE_ID" ]; then
