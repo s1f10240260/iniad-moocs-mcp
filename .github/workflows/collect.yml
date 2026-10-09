@@ -98,4 +98,36 @@ jobs:
             collect-*.jsonl
           retention-days: 7
 
-      # TODO: wrangler で R2 / D1 へ反映（Phase 5 以降）
+      # Phase 5: R2 / D1 へ反映（Cloudflare Secrets 未設定ならスキップ）
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: workers/package-lock.json
+
+      - name: Install ingest deps
+        working-directory: workers
+        run: npm ci
+
+      - name: Ingest to D1 / R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "CLOUDFLARE_* secrets not set — skip D1/R2, artifact only"
+            exit 0
+          fi
+          if [ -n "$CLOUDFLARE_DATABASE_ID" ]; then
+            sed -i "s/database_id = .*/database_id = \"$CLOUDFLARE_DATABASE_ID\"/" workers/wrangler.toml
+          fi
+          cd workers
+          npm run db:remote
+          npm run ingest -- \
+            --out ../out \
+            --jsonl ../collect-slides.jsonl \
+            --jsonl ../collect-contents.jsonl \
+            --remote \
+            --retries 3
