@@ -120,9 +120,7 @@ jobs:
             echo "CLOUDFLARE_* secrets not set -- skip D1/R2, artifact only"
             exit 0
           fi
-          if [ -n "$CLOUDFLARE_DATABASE_ID" ]; then
-            sed -i "s/database_id = .*/database_id = \"$CLOUDFLARE_DATABASE_ID\"/" workers/wrangler.toml
-          fi
+          node workers/scripts/patch-d1-id.mjs
           cd workers
           npm run db:remote
           npm run ingest -- \

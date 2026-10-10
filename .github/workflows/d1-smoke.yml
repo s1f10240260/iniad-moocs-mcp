@@ -39,9 +39,7 @@ jobs:
           CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
           D1_SQL: ${{ github.event.inputs.sql }}
         run: |
-          if [ -n "$CLOUDFLARE_DATABASE_ID" ]; then
-            sed -i "s/database_id = .*/database_id = \\"$CLOUDFLARE_DATABASE_ID\\"/" workers/wrangler.toml
-          fi
+          node workers/scripts/patch-d1-id.mjs
           cd workers
           echo "== $D1_SQL"
           npx wrangler d1 execute moocs-mcp --remote --command "$D1_SQL"
