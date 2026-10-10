@@ -2,9 +2,13 @@
  * Cloudflare Workers — MCP Server + REST API
  * 詳細: ../DESIGN.md 「MCP Server設計」
  *
- * Phase 4: 検索 API を実装。MCP / 認証は後続。
+ * - GET /health
+ * - GET /api/courses
+ * - GET /api/search?q=
+ * - POST /mcp  JSON-RPC (initialize / tools/list / tools/call)
  */
 
+import { mcpCallTool, mcpToolList } from "./mcp/tools";
 import { listCourses, searchContents } from "./search/query";
 
 export interface Env {
@@ -20,6 +24,60 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+interface JsonRpcReq {
+  jsonrpc?: string;
+  id?: unknown;
+  method?: string;
+  params?: Record<string, unknown>;
+}
+
+async function handleMcp(request: Request, env: Env): Promise<Response> {
+  let body: JsonRpcReq;
+  try {
+    body = (await request.json()) as JsonRpcReq;
+  } catch {
+    return json({ error: "invalid JSON-RPC body" }, 400);
+  }
+  const id = body.id ?? null;
+  const method = body.method ?? "";
+
+  const result = async (value: unknown) =>
+    json({ jsonrpc: "2.0", id, result: value });
+  const error = (code: number, message: string) =>
+    json({ jsonrpc: "2.0", id, error: { code, message } });
+
+  if (method === "initialize") {
+    return result({
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: {} },
+      serverInfo: { name: "moocs-mcp", version: "0.1.0" },
+    });
+  }
+  if (method === "notifications/initialized" || method === "initialized") {
+    return result({ ok: true });
+  }
+  if (method === "tools/list") {
+    return result(mcpToolList());
+  }
+  if (method === "tools/call") {
+    const params = body.params ?? {};
+    const name = String(params.name ?? "");
+    const args = (params.arguments ?? {}) as Record<string, unknown>;
+    try {
+      const data = await mcpCallTool(env, name, args);
+      return result({
+        content: [{ type: "text", text: JSON.stringify(data) }],
+      });
+    } catch (e) {
+      return result({
+        content: [{ type: "text", text: String(e) }],
+        isError: true,
+      });
+    }
+  }
+  return error(-32601, `Method not found: ${method}`);
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
@@ -27,6 +85,10 @@ export default {
 
     if (path === "/health") {
       return json({ ok: true, year: env.MOOCS_YEAR });
+    }
+
+    if (path === "/mcp") {
+      return handleMcp(request, env);
     }
 
     if (path === "/api/courses") {
@@ -47,13 +109,6 @@ export default {
       }
     }
 
-    return json(
-      {
-        error: "not_implemented",
-        note: "Phase 4 — see docs/ROADMAP.md",
-        path,
-      },
-      501,
-    );
+    return json({ error: "not_found", path }, 404);
   },
 };
