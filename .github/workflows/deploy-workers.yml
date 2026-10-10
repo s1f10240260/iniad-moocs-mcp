@@ -1,4 +1,4 @@
-# Workers をデプロイする（手動実行）
+﻿# Workers 繧偵ョ繝励Ο繧､縺吶ｋ・域焔蜍募ｮ溯｡鯉ｼ・
 # Secrets: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_DATABASE_ID
 
 name: deploy-workers
@@ -33,6 +33,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
         run: |
-          node workers/scripts/patch-d1-id.mjs
+          node workers/scripts/patch-d1-id.cjs
           cd workers
           npx wrangler deploy
+
