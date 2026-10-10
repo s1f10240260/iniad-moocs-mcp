@@ -23,6 +23,10 @@ on:
         description: "コース CODE（空なら --all）"
         required: false
         default: ""
+      skip_contents:
+        description: "skip contents collect (rate limit)"
+        required: false
+        default: "false"
 
 permissions:
   contents: read
@@ -77,6 +81,7 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Collect quizzes & assignments
+        if: ${{ github.event.inputs.skip_contents != 'true' }}
         env:
           MOOCS_USERNAME: ${{ secrets.MOOCS_USERNAME }}
           MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
