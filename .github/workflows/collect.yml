@@ -86,6 +86,10 @@ jobs:
           python -m pip install -e .
           python -m playwright install --with-deps chromium
 
+      - name: Empty contents jsonl when skipped
+        if: ${{ github.event.inputs.skip_contents == 'true' }}
+        run: touch collect-contents.jsonl
+
       - name: Collect quizzes & assignments
         if: ${{ github.event.inputs.skip_contents != 'true' }}
         env:
