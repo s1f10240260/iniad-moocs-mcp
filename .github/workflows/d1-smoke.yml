@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       sql:
-        description: "実行する SELECT（read-only 想定）"
-        required: false
-        default: "SELECT count(*) AS courses FROM courses; SELECT count(*) AS lectures FROM lectures; SELECT count(*) AS contents FROM contents;"
+        description: "実行する SELECT（1 文、read-only 想定）"
+        required: true
+        default: "SELECT count(*) AS courses FROM courses"
 
 permissions:
   contents: read
@@ -37,9 +37,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
+          D1_SQL: ${{ github.event.inputs.sql }}
         run: |
           if [ -n "$CLOUDFLARE_DATABASE_ID" ]; then
             sed -i "s/database_id = .*/database_id = \\"$CLOUDFLARE_DATABASE_ID\\"/" workers/wrangler.toml
           fi
           cd workers
-          npx wrangler d1 execute moocs-mcp --remote --command "${{ github.event.inputs.sql }}"
+          echo "== $D1_SQL"
+          npx wrangler d1 execute moocs-mcp --remote --command "$D1_SQL"
