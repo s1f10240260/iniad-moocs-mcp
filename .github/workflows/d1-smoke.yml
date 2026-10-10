@@ -39,7 +39,7 @@ jobs:
           CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
           D1_SQL: ${{ github.event.inputs.sql }}
         run: |
-          node workers/scripts/patch-d1-id.mjs
+          node workers/scripts/patch-d1-id.cjs
           cd workers
           echo "== $D1_SQL"
           npx wrangler d1 execute moocs-mcp --remote --command "$D1_SQL"

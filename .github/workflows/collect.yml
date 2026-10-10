@@ -120,7 +120,7 @@ jobs:
             echo "CLOUDFLARE_* secrets not set -- skip D1/R2, artifact only"
             exit 0
           fi
-          node workers/scripts/patch-d1-id.mjs
+          node workers/scripts/patch-d1-id.cjs
           cd workers
           npm run db:remote
           npm run ingest -- \
