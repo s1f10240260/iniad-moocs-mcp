@@ -109,6 +109,21 @@ export default {
       }
     }
 
+    // GET /api/slides/2026/INI201/02  → R2 の slides.pdf を返す
+    const slideMatch = path.match(/^\/api\/slides\/(\d{4})\/([A-Za-z0-9_-]+)\/(\d{1,3})$/);
+    if (slideMatch) {
+      const [, year, code, ll] = slideMatch;
+      const key = `${year}/${code}/${String(Number(ll)).padStart(2, "0")}/slides.pdf`;
+      const obj = await env.SLIDES.get(key);
+      if (!obj) return json({ error: "not_found", key }, 404);
+      return new Response(obj.body, {
+        headers: {
+          "content-type": "application/pdf",
+          "cache-control": "public, max-age=3600",
+        },
+      });
+    }
+
     return json({ error: "not_found", path }, 404);
   },
 };
