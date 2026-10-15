@@ -2,12 +2,16 @@
  * Cloudflare Workers — MCP Server + REST API
  * 詳細: ../DESIGN.md 「MCP Server設計」
  *
- * - GET /health
+ * - GET /health（認証不要）
  * - GET /api/courses
  * - GET /api/search?q=
+ * - GET /api/slides/{year}/{CODE}/{LL}
  * - POST /mcp  JSON-RPC (initialize / tools/list / tools/call)
+ *
+ * 認証: INIAD Keycloak (OIDC) の Bearer トークン
  */
 
+import { unauthorized, verifyBearer } from "./auth/oidc.js";
 import { mcpCallTool, mcpToolList } from "./mcp/tools";
 import { listCourses, searchContents } from "./search/query";
 
@@ -41,8 +45,7 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
   const id = body.id ?? null;
   const method = body.method ?? "";
 
-  const result = async (value: unknown) =>
-    json({ jsonrpc: "2.0", id, result: value });
+  const result = async (value: unknown) => json({ jsonrpc: "2.0", id, result: value });
   const error = (code: number, message: string) =>
     json({ jsonrpc: "2.0", id, error: { code, message } });
 
@@ -65,14 +68,9 @@ async function handleMcp(request: Request, env: Env): Promise<Response> {
     const args = (params.arguments ?? {}) as Record<string, unknown>;
     try {
       const data = await mcpCallTool(env, name, args);
-      return result({
-        content: [{ type: "text", text: JSON.stringify(data) }],
-      });
+      return result({ content: [{ type: "text", text: JSON.stringify(data) }] });
     } catch (e) {
-      return result({
-        content: [{ type: "text", text: String(e) }],
-        isError: true,
-      });
+      return result({ content: [{ type: "text", text: String(e) }], isError: true });
     }
   }
   return error(-32601, `Method not found: ${method}`);
@@ -86,6 +84,9 @@ export default {
     if (path === "/health") {
       return json({ ok: true, year: env.MOOCS_YEAR });
     }
+
+    const auth = await verifyBearer(request);
+    if (!auth.ok) return unauthorized(auth.error ?? "unauthorized");
 
     if (path === "/mcp") {
       return handleMcp(request, env);
@@ -109,7 +110,6 @@ export default {
       }
     }
 
-    // GET /api/slides/2026/INI201/02  → R2 の slides.pdf を返す
     const slideMatch = path.match(/^\/api\/slides\/(\d{4})\/([A-Za-z0-9_-]+)\/(\d{1,3})$/);
     if (slideMatch) {
       const [, year, code, ll] = slideMatch;
@@ -119,7 +119,7 @@ export default {
       return new Response(obj.body, {
         headers: {
           "content-type": "application/pdf",
-          "cache-control": "public, max-age=3600",
+          "cache-control": "private, max-age=3600",
         },
       });
     }
