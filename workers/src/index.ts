@@ -86,6 +86,13 @@ export default {
       return json({ ok: true, year: env.MOOCS_YEAR });
     }
 
+    if (path === "/login") {
+      return handleLogin(url);
+    }
+    if (path === "/callback") {
+      return handleCallback(request, url);
+    }
+
     const auth = await verifyBearer(request);
     if (!auth.ok) return unauthorized(auth.error ?? "unauthorized");
 
