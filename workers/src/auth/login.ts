@@ -47,11 +47,11 @@ export async function handleLogin(url: URL): Promise<Response> {
   const headers = new Headers({ location: authUrl.toString() });
   headers.append(
     "set-cookie",
-    `ocx_pkce=${verifier}; HttpOnly; Secure; Path=/callback; SameSite=Lax; Max-Age=600`,
+    `ocx_pkce=${verifier}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`,
   );
   headers.append(
     "set-cookie",
-    `ocx_state=${state}; HttpOnly; Secure; Path=/callback; SameSite=Lax; Max-Age=600`,
+    `ocx_state=${state}; HttpOnly; Secure; Path=/; SameSite=Lax; Max-Age=600`,
   );
   return new Response(null, { status: 302, headers });
 }
@@ -68,7 +68,9 @@ export async function handleCallback(request: Request, url: URL): Promise<Respon
   const verifier = cookies.ocx_pkce;
   const expected = cookies.ocx_state;
   if (!code || !verifier || !state || state !== expected) {
-    return html("<p>ログインに失敗しました（state / code が不正）。<a href='/login'>再試行</a></p>");
+    return html(
+    `<p>ログインに失敗しました。</p><p>code=${code ? "あり" : "無"} / state=${state ? "あり" : "無"} / verifier=${verifier ? "あり" : "無"}</p><p><a href="/login">再試行</a></p>`,
+  );
   }
 
   const body = new URLSearchParams({
