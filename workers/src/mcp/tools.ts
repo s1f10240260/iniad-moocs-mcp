@@ -1,8 +1,15 @@
 /**
  * MCP tools (JSON-RPC over HTTP).
- * DESIGN: list_courses / get_contents / search_content を公開。
+ * DESIGN: list_courses / get_lecture_info / get_contents / get_slides / search_content
  */
 
+import {
+  getContentById,
+  getContentsByLecture,
+  getLectureInfo,
+  getSlidesMeta,
+  slidesR2Key,
+} from "../search/lookup.js";
 import { listCourses, searchContents } from "../search/query.js";
 
 export interface Env {
@@ -31,6 +38,39 @@ const TOOLS = [
     description: "登録済みコース一覧を返す",
     inputSchema: { type: "object", properties: {} },
   },
+  {
+    name: "get_lecture_info",
+    description: "講義メタデータを取得する",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lecture_id: { type: "string", description: "例: 2026/INI201/02" },
+      },
+      required: ["lecture_id"],
+    },
+  },
+  {
+    name: "get_contents",
+    description: "講義のクイズ・課題 HTML を取得する",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lecture_id: { type: "string", description: "例: 2026/INI201/02" },
+        id: { type: "string", description: "例: 2026/INI201/02/assignment" },
+      },
+    },
+  },
+  {
+    name: "get_slides",
+    description: "講義スライド PDF の情報を返す（ダウンロード URL パス含む）",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lecture_id: { type: "string", description: "例: 2026/INI201/02" },
+      },
+      required: ["lecture_id"],
+    },
+  },
 ] as const;
 
 export function mcpToolList() {
@@ -54,6 +94,33 @@ export async function mcpCallTool(
       limit: typeof args.limit === "number" ? args.limit : undefined,
     });
     return { count: hits.length, hits };
+  }
+  if (name === "get_lecture_info") {
+    const id = String(args.lecture_id ?? "");
+    const row = await getLectureInfo(env.DB, id);
+    if (!row) throw new Error(`lecture not found: ${id}`);
+    return row;
+  }
+  if (name === "get_contents") {
+    const id = args.id ? String(args.id) : undefined;
+    const lectureId = args.lecture_id ? String(args.lecture_id) : undefined;
+    if (id) {
+      const row = await getContentById(env.DB, id);
+      if (!row) throw new Error(`content not found: ${id}`);
+      return row;
+    }
+    if (!lectureId) throw new Error("id or lecture_id is required");
+    return { items: await getContentsByLecture(env.DB, lectureId) };
+  }
+  if (name === "get_slides") {
+    const id = String(args.lecture_id ?? "");
+    const meta = await getSlidesMeta(env.DB, id);
+    const key = meta?.r2_key ?? slidesR2Key(id);
+    return {
+      lecture_id: id,
+      r2_key: key,
+      download_path: `/api/slides/${id}`,
+    };
   }
   throw new Error(`unknown tool: ${name}`);
 }
