@@ -11,6 +11,7 @@
  * 認証: INIAD Keycloak (OIDC) の Bearer トークン
  */
 
+import { handleCallback, handleLogin } from "./auth/login.js";
 import { unauthorized, verifyBearer } from "./auth/oidc.js";
 import { mcpCallTool, mcpToolList } from "./mcp/tools";
 import { listCourses, searchContents } from "./search/query";
