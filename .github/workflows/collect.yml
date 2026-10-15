@@ -60,10 +60,10 @@ jobs:
           MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
         run: |
           YEAR="${{ github.event.inputs.year || '2026' }}"
+          COURSE="${{ github.event.inputs.course }}"
           if [ "${{ github.event_name }}" = "schedule" ] && [ -z "$COURSE" ]; then
             COURSE="INI201,INI202"
           fi
-          COURSE="${{ github.event.inputs.course }}"
           BIN=./collector/slides/target/release/collect-headless
           if [ -n "$COURSE" ]; then
             : > collect-slides.jsonl
@@ -100,10 +100,10 @@ jobs:
           MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
         run: |
           YEAR="${{ github.event.inputs.year || '2026' }}"
+          COURSE="${{ github.event.inputs.course }}"
           if [ "${{ github.event_name }}" = "schedule" ] && [ -z "$COURSE" ]; then
             COURSE="INI201,INI202"
           fi
-          COURSE="${{ github.event.inputs.course }}"
           if [ -n "$COURSE" ]; then
             : > collect-contents.jsonl
             IFS=',' read -ra LIST <<< "$COURSE"
