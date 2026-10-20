@@ -122,9 +122,8 @@ jobs:
         with:
           name: moocs-collect-${{ github.run_id }}
           path: |
-            out/
             collect-*.jsonl
-          retention-days: 7
+          retention-days: 1
 
       # Phase 5: ingest to R2 / D1 (skip when CLOUDFLARE secrets are absent)
       - name: Setup Node
