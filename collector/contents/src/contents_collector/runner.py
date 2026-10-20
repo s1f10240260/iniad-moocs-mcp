@@ -8,7 +8,8 @@ from pathlib import Path
 
 from .collect import (
     classify_assignment,
-    fetch_problem_html,
+    fetch_assignment_status,
+  fetch_problem_html,
     parse_assignment_urls,
     write_content,
 )
@@ -50,6 +51,7 @@ async def run_collect(
 
     ok = 0
     failed = 0
+    skipped = 0
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         ctx = await browser.new_context()
@@ -127,6 +129,20 @@ async def run_collect(
                     kind = classify_assignment(aid)
                     if kind not in types:
                         continue
+                    status = await fetch_assignment_status(ctx.request, year, ac, aid)
+                    if status == "hidden":
+                        emit(
+                            {
+                                "event": "skip",
+                                "course": code,
+                                "lecture": ll,
+                                "assignment_id": aid,
+                                "reason": "hidden",
+                            },
+                            f"skip hidden {aid}",
+                        )
+                        skipped += 1
+                        continue
                     budget.consume(1)
                     try:
                         problem_html = await fetch_problem_html(
@@ -167,5 +183,5 @@ async def run_collect(
 
         await browser.close()
 
-    emit({"event": "summary", "ok": ok, "failed": failed}, f"summary ok={ok} failed={failed}")
+    emit({"event": "summary", "ok": ok, "skipped": skipped, "failed": failed}, f"summary ok={ok} skipped={skipped} failed={failed}")
     return ok if failed == 0 else 0
