@@ -97,3 +97,19 @@ def plan_lectures(slugs: list[str]) -> tuple[list[LectureRef], list[int | None],
 
 def consume_budget(budget: DailyBudget, n: int) -> None:
     budget.consume(n)
+
+async def fetch_assignment_status(
+    request, year: int, course: str, assignment_id: str
+) -> str | None:
+    """hidden / closed / open など。取得できなければ None。"""
+    url = f"https://moocs.iniad.org/assignments/{year}/{course}/{assignment_id}/status"
+    try:
+        resp = await request.get(url)
+        if not resp.ok:
+            return None
+        raw = await resp.body()
+        data = json.loads(raw.decode("utf-8"))
+        st = data.get("status")
+        return str(st) if isinstance(st, str) else None
+    except Exception:
+        return None
