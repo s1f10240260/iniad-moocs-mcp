@@ -1,4 +1,4 @@
-﻿# Workers 繧偵ョ繝励Ο繧､縺吶ｋ・域焔蜍募ｮ溯｡鯉ｼ・
+# Workers 繧偵ョ繝励Ο繧､縺吶ｋ・域焔蜍募ｮ溯｡鯉ｼ・
 # Secrets: CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_DATABASE_ID
 
 name: deploy-workers
@@ -36,5 +36,11 @@ jobs:
         run: |
           node workers/scripts/patch-d1-id.cjs
           cd workers
+          if [ -n "$AUTH_SECRET" ]; then
+            printf '%s' "$AUTH_SECRET" | npx wrangler secret put AUTH_SECRET
+          else
+            echo "AUTH_SECRET is empty — session tokens will not work"
+            exit 1
+          fi
           npx wrangler deploy
 
