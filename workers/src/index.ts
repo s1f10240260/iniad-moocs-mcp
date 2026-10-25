@@ -12,6 +12,7 @@
  */
 
 import { iniadFormLogin } from "./auth/form-login.js";
+import { indexHtml } from "./ui.js";
 import { issueSessionToken } from "./auth/session.js";
 import { unauthorized, verifyBearer } from "./auth/verify.js";
 import { mcpCallTool, mcpToolList } from "./mcp/tools";
@@ -86,6 +87,10 @@ export default {
 
     if (path === "/health") {
       return json({ ok: true, year: env.MOOCS_YEAR });
+    }
+
+    if (path === "/" && request.method === "GET") {
+      return indexHtml();
     }
 
     if (path === "/login" && request.method === "POST") {
