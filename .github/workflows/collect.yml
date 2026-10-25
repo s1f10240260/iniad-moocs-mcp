@@ -38,7 +38,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 
@@ -62,8 +62,7 @@ jobs:
           YEAR="${{ github.event.inputs.year || '2026' }}"
           COURSE="${{ github.event.inputs.course }}"
           if [ "${{ github.event_name }}" = "schedule" ] && [ -z "$COURSE" ]; then
-            DOW=$(date -u +%u)
-            COURSE=$(sed -n "${DOW}p" ci/course-batches.txt | tr -d '[:space:]')
+            COURSE=$(tr -d '[:space:]' < ci/course-all.txt)
             [ -z "$COURSE" ] && COURSE="INI201,INI202"
             echo "schedule batch day=$DOW courses=$COURSE"
           fi
@@ -105,8 +104,7 @@ jobs:
           YEAR="${{ github.event.inputs.year || '2026' }}"
           COURSE="${{ github.event.inputs.course }}"
           if [ "${{ github.event_name }}" = "schedule" ] && [ -z "$COURSE" ]; then
-            DOW=$(date -u +%u)
-            COURSE=$(sed -n "${DOW}p" ci/course-batches.txt | tr -d '[:space:]')
+            COURSE=$(tr -d '[:space:]' < ci/course-all.txt)
             [ -z "$COURSE" ] && COURSE="INI201,INI202"
             echo "schedule batch day=$DOW courses=$COURSE"
           fi
