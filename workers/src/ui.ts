@@ -26,9 +26,9 @@ pre { white-space: pre-wrap; word-break: break-word; }
 <body>
   <h1>Moocs 講義検索</h1>
   <section id="login">
-    <p>INIAD の学籍番号とパスワードでログインしてください。</p>
+    <p>INIAD のID とパスワードでログインしてください。</p>
     <form id="loginForm">
-      <label>学籍番号 <input type="text" id="username" autocomplete="username" required></label>
+      <label>ID <input type="text" id="username" autocomplete="username" required></label>
       <label>パスワード <input type="password" id="password" autocomplete="current-password" required></label>
       <button type="submit">ログイン</button>
     </form>
