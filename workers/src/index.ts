@@ -11,8 +11,9 @@
  * 認証: INIAD Keycloak (OIDC) の Bearer トークン
  */
 
-import { handleCallback, handleLogin } from "./auth/login.js";
-import { unauthorized, verifyBearer } from "./auth/oidc.js";
+import { iniadFormLogin } from "./auth/form-login.js";
+import { issueSessionToken } from "./auth/session.js";
+import { unauthorized, verifyBearer } from "./auth/verify.js";
 import { mcpCallTool, mcpToolList } from "./mcp/tools";
 import { listCourses, searchContents } from "./search/query";
 
@@ -20,6 +21,7 @@ export interface Env {
   DB: D1Database;
   SLIDES: R2Bucket;
   MOOCS_YEAR: string;
+  AUTH_SECRET: string;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -86,14 +88,27 @@ export default {
       return json({ ok: true, year: env.MOOCS_YEAR });
     }
 
-    if (path === "/login") {
-      return handleLogin(url);
-    }
-    if (path === "/callback") {
-      return handleCallback(request, url);
+    if (path === "/login" && request.method === "POST") {
+      let creds: { username?: string; password?: string };
+      try {
+        creds = (await request.json()) as { username?: string; password?: string };
+      } catch {
+        return json({ error: "invalid JSON body" }, 400);
+      }
+      const username = String(creds.username ?? "");
+      const password = String(creds.password ?? "");
+      if (!username || !password) {
+        return json({ error: "username and password required" }, 400);
+      }
+      const result = await iniadFormLogin(username, password);
+      if (!result.ok) {
+        return json({ error: "login_failed", detail: result.error }, 401);
+      }
+      const token = await issueSessionToken(env.AUTH_SECRET, username);
+      return json({ token_type: "Bearer", access_token: token, expires_in: 86400 });
     }
 
-    const auth = await verifyBearer(request);
+    const auth = await verifyBearer(request, env.AUTH_SECRET);
     if (!auth.ok) return unauthorized(auth.error ?? "unauthorized");
 
     if (path === "/mcp") {
