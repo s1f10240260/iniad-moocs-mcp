@@ -124,3 +124,14 @@ export async function getSlidesMeta(
     .all<{ id: string; r2_key: string | null; title: string }>();
   return res.results?.[0] ?? null;
 }
+
+export async function lectureExists(
+  db: D1Database,
+  lectureId: string,
+): Promise<boolean> {
+  const res = await db
+    .prepare("SELECT 1 AS ok FROM lectures WHERE id = ?1 LIMIT 1")
+    .bind(lectureId)
+    .all<{ ok: number }>();
+  return (res.results?.length ?? 0) > 0;
+}
