@@ -6,8 +6,9 @@
 import {
   getContentById,
   getContentsByLecture,
-  getLectureInfo,
   getSlidesMeta,
+  normalizeLectureId,
+  resolveLecture,
   slidesR2Key,
 } from "../search/lookup.js";
 import { listCourses, searchContents } from "../search/query.js";
@@ -35,16 +36,20 @@ const TOOLS = [
   },
   {
     name: "list_courses",
-    description: "登録済みコース一覧を返す",
+    description: "登録済みコースと講義 ID 一覧を返す（講義 ID は 2026/CODE/LL 形式）",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "get_lecture_info",
-    description: "講義メタデータを取得する",
+    description:
+      "講義メタデータを取得する。lecture_id には講義 ID（2026/INI201/02）またはコース ID（2026/INI201）・コード（INI201）を渡せる。コース指定なら講義一覧を返す。",
     inputSchema: {
       type: "object",
       properties: {
-        lecture_id: { type: "string", description: "例: 2026/INI201/02" },
+        lecture_id: {
+          type: "string",
+          description: "例: 2026/INI201/02（講義） / 2026/INI201 または INI201（コース一覧）",
+        },
       },
       required: ["lecture_id"],
     },
@@ -83,7 +88,23 @@ export async function mcpCallTool(
   args: Record<string, unknown>,
 ): Promise<unknown> {
   if (name === "list_courses") {
-    return { courses: await listCourses(env.DB) };
+    const courses = await listCourses(env.DB);
+    const out: {
+      id: string;
+      year: number;
+      code: string;
+      name: string;
+      lectures: { id: string; number: number; title: string }[];
+    }[] = [];
+    for (const c of courses) {
+      const lec = await env.DB.prepare(
+        "SELECT id, number, title FROM lectures WHERE course_id = ?1 ORDER BY number",
+      )
+        .bind(c.id)
+        .all<{ id: string; number: number; title: string }>();
+      out.push({ ...c, lectures: lec.results ?? [] });
+    }
+    return { courses: out };
   }
   if (name === "search_content") {
     const q = String(args.q ?? "");
@@ -97,13 +118,26 @@ export async function mcpCallTool(
   }
   if (name === "get_lecture_info") {
     const id = String(args.lecture_id ?? "");
-    const row = await getLectureInfo(env.DB, id);
-    if (!row) throw new Error(`lecture not found: ${id}`);
-    return row;
+    if (!id) throw new Error("lecture_id is required");
+    const r = await resolveLecture(env.DB, id);
+    if (r.kind === "missing") {
+      throw new Error(
+        `lecture not found: ${id}（講義 ID は 2026/CODE/LL 形式。list_courses で一覧を確認できます）`,
+      );
+    }
+    if (r.kind === "course") {
+      return {
+        course: r.course,
+        lecture_count: r.lectures.length,
+        lectures: r.lectures,
+        hint: "講義 1 件の詳細は lecture_id に 2026/CODE/LL を渡してください",
+      };
+    }
+    return r.row;
   }
   if (name === "get_contents") {
     const id = args.id ? String(args.id) : undefined;
-    const lectureId = args.lecture_id ? String(args.lecture_id) : undefined;
+    const lectureId = args.lecture_id ? normalizeLectureId(String(args.lecture_id)) : undefined;
     if (id) {
       const row = await getContentById(env.DB, id);
       if (!row) throw new Error(`content not found: ${id}`);
@@ -113,7 +147,7 @@ export async function mcpCallTool(
     return { items: await getContentsByLecture(env.DB, lectureId) };
   }
   if (name === "get_slides") {
-    const id = String(args.lecture_id ?? "");
+    const id = normalizeLectureId(String(args.lecture_id ?? ""));
     const meta = await getSlidesMeta(env.DB, id);
     const key = meta?.r2_key ?? slidesR2Key(id);
     return {
