@@ -7,6 +7,7 @@ import {
   getContentById,
   getContentsByLecture,
   getSlidesMeta,
+  lectureExists,
   normalizeLectureId,
   resolveLecture,
   slidesR2Key,
@@ -29,7 +30,7 @@ const TOOLS = [
         q: { type: "string", description: "検索語（2文字以上の部分一致可）" },
         type: { type: "string", enum: ["quiz", "assignment"] },
         course: { type: "string", description: "コース CODE 例: INI201" },
-        limit: { type: "number", description: "最大件数 1-50" },
+        limit: { type: "number", description: "最大件数 1-50（範囲外はエラー）" },
       },
       required: ["q"],
     },
@@ -56,7 +57,7 @@ const TOOLS = [
   },
   {
     name: "get_contents",
-    description: "講義のクイズ・課題 HTML を取得する",
+    description: "講義のクイズ・課題 HTML を取得する。id と lecture_id を両方渡す場合は一致必須",
     inputSchema: {
       type: "object",
       properties: {
@@ -67,7 +68,8 @@ const TOOLS = [
   },
   {
     name: "get_slides",
-    description: "講義スライド PDF の情報を返す（ダウンロード URL パス含む）",
+    description:
+      "講義スライド PDF の情報を返す。講義が存在しない／R2 に PDF がない場合はエラー",
     inputSchema: {
       type: "object",
       properties: {
@@ -109,10 +111,18 @@ export async function mcpCallTool(
   if (name === "search_content") {
     const q = String(args.q ?? "");
     if (!q) throw new Error("q is required");
+    if (q.trim().length < 1) throw new Error("q is required");
+    let limit: number | undefined;
+    if (args.limit !== undefined) {
+      const n = Number(args.limit);
+      if (!Number.isFinite(n)) throw new Error("limit must be a number");
+      if (n < 1 || n > 50) throw new Error("limit must be 1-50");
+      limit = Math.floor(n);
+    }
     const hits = await searchContents(env.DB, q, {
       type: args.type ? String(args.type) : undefined,
       course: args.course ? String(args.course) : undefined,
-      limit: typeof args.limit === "number" ? args.limit : undefined,
+      limit,
     });
     return { count: hits.length, hits };
   }
@@ -138,6 +148,16 @@ export async function mcpCallTool(
   if (name === "get_contents") {
     const id = args.id ? String(args.id) : undefined;
     const lectureId = args.lecture_id ? normalizeLectureId(String(args.lecture_id)) : undefined;
+    if (id && lectureId) {
+      const row = await getContentById(env.DB, id);
+      if (!row) throw new Error(`content not found: ${id}`);
+      if (row.lecture_id !== lectureId) {
+        throw new Error(
+          `id and lecture_id mismatch: ${id} belongs to ${row.lecture_id}, not ${lectureId}`,
+        );
+      }
+      return row;
+    }
     if (id) {
       const row = await getContentById(env.DB, id);
       if (!row) throw new Error(`content not found: ${id}`);
@@ -148,11 +168,23 @@ export async function mcpCallTool(
   }
   if (name === "get_slides") {
     const id = normalizeLectureId(String(args.lecture_id ?? ""));
+    if (!id) throw new Error("lecture_id is required");
+    if (!(await lectureExists(env.DB, id))) {
+      throw new Error(
+        `lecture not found: ${id}（講義 ID は 2026/CODE/LL 形式。list_courses で一覧を確認できます）`,
+      );
+    }
     const meta = await getSlidesMeta(env.DB, id);
     const key = meta?.r2_key ?? slidesR2Key(id);
+    const obj = await env.SLIDES.head(key);
+    if (!obj) {
+      throw new Error(`slides not found: ${id}（R2 に ${key} がありません。未アップロードの可能性）`);
+    }
     return {
       lecture_id: id,
       r2_key: key,
+      size: obj.size,
+      uploaded: obj.uploaded.toISOString(),
       download_path: `/api/slides/${id}`,
     };
   }
