@@ -10,6 +10,8 @@
     "db:local": "wrangler d1 migrations apply moocs-mcp --local",
     "db:remote": "wrangler d1 migrations apply moocs-mcp --remote",
     "ingest": "tsx ingest/main.ts",
+    "backfill:slide-text": "tsx ingest/main.ts --backfill-slide-text --remote",
+    "backfill:slide-text": "tsx ingest/main.ts --backfill-slide-text --remote",
     "ingest:fixture": "tsx ingest/main.ts --out ../tests/fixtures/sample-out --jsonl ../tests/fixtures/sample-out/collect-slides.jsonl --jsonl ../tests/fixtures/sample-out/collect-contents.jsonl --aliases ../tests/fixtures/sample-out/aliases.json",
     "test": "vitest run test/unit",
     "test:integration": "vitest run test/integration"
