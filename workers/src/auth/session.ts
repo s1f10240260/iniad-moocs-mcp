@@ -32,7 +32,7 @@ export interface SessionToken {
 export async function issueSessionToken(
   secret: string,
   sub: string,
-  ttlSeconds = 86400,
+  ttlSeconds = 30 * 24 * 3600,
 ): Promise<string> {
   const payload: SessionToken = { sub, exp: Math.floor(Date.now() / 1000) + ttlSeconds };
   const body = b64url(enc.encode(JSON.stringify(payload)));
