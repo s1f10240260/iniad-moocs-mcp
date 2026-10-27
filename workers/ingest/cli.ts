@@ -179,7 +179,8 @@ async function backfillSlideText(
       const data = await readFile(dest);
       const text = await pdfToText(data);
       if (!text) {
-        emit({ event: "backfill_empty", id: r.id, key });
+        // 画像 PDF（テキストレイヤなし）は検索対象にできない
+        emit({ event: "backfill_no_text_layer", id: r.id, key });
         failed++;
         continue;
       }
