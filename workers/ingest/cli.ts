@@ -15,6 +15,7 @@ import { parseArgs } from "node:util";
 
 import { htmlToText, sanitizeHtml } from "./html.js";
 import { addJsonl, emptyManifest, type Manifest } from "./manifest.js";
+import { pdfToText } from "./pdf.js";
 import { buildAliasStatements, buildStatements, type ContentRow } from "./sql.js";
 import { d1ExecuteFile, d1Query, r2Put, type WranglerTarget } from "./wrangler.js";
 
@@ -193,7 +194,8 @@ export async function run(argv: string[]): Promise<number> {
     if (c.type === "slide") {
       const sha256 = createHash("sha256").update(data).digest("hex");
       if (known.get(c.id) !== sha256) uploads.push({ key: c.file, file: abs, id: c.id });
-      rows.push({ ...c, contentHtml: "", contentText: "", r2Key: c.file, sha256 });
+      const contentText = await pdfToText(data);
+      rows.push({ ...c, contentHtml: "", contentText, r2Key: c.file, sha256 });
     } else {
       const html = data.toString("utf8");
       rows.push({ ...c, contentHtml: sanitizeHtml(html), contentText: htmlToText(html), r2Key: null, sha256: null });
