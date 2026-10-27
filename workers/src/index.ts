@@ -111,7 +111,11 @@ export default {
           return json({ error: "login_failed", detail: result.error, url: result.finalUrl }, 401);
         }
         const token = await issueSessionToken(env.AUTH_SECRET, username);
-        return json({ token_type: "Bearer", access_token: token, expires_in: 86400 });
+        return json({
+          token_type: "Bearer",
+          access_token: token,
+          expires_in: 30 * 24 * 3600,
+        });
       } catch (e) {
         return json({ error: "login_exception", detail: String(e) }, 500);
       }

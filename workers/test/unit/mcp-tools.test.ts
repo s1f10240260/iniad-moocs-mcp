@@ -16,7 +16,7 @@ describe("mcp tools", () => {
   });
 });
 
-function fakeDb(rowsBySql: Record<string, unknown[][]>) {
+function fakeDb(rowsBySql: Record<string, Record<string, unknown>[]>) {
   return {
     prepare(sql: string) {
       return {
