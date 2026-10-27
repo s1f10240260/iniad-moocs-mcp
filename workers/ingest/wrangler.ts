@@ -86,3 +86,7 @@ export async function r2Put(t: WranglerTarget, key: string, file: string, conten
     contentType,
   ]);
 }
+
+export async function r2Get(t: WranglerTarget, key: string, dest: string): Promise<void> {
+  await runWrangler(["r2", "object", "get", `${t.bucket}/${key}`, ...modeArgs(t), "--file", dest]);
+}

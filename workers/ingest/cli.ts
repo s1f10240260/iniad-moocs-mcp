@@ -17,7 +17,8 @@ import { htmlToText, sanitizeHtml } from "./html.js";
 import { addJsonl, emptyManifest, type Manifest } from "./manifest.js";
 import { pdfToText } from "./pdf.js";
 import { buildAliasStatements, buildStatements, type ContentRow } from "./sql.js";
-import { d1ExecuteFile, d1Query, r2Put, type WranglerTarget } from "./wrangler.js";
+import { toBigramText } from "../src/search/bigram.js";
+import { d1ExecuteFile, d1Query, r2Get, r2Put, type WranglerTarget } from "./wrangler.js";
 
 export const EXIT_RUNTIME = 1;
 const EXIT_USAGE = 2;
@@ -30,6 +31,7 @@ const USAGE = `usage: ingest --out <dir> --jsonl <file> [--jsonl <file> ...] [op
   --remote             本番の D1 / R2 に反映する（既定はローカル）
   --persist-to <dir>   ローカル D1 / R2 の永続化先
   --force-upload       ハッシュが同じ PDF も R2 に再アップロードする
+  --backfill-slide-text  既存スライドの content_text を R2 の PDF から埋める（--out/--jsonl 不要）
   --concurrency <n>    R2 アップロード並列数（既定: ローカル 1 / リモート 4）
   --retries <n>        wrangler 呼び出しの再試行回数（既定 3）
   --dry-run            D1 / R2 に触れず、生成した SQL を stdout に出す
@@ -43,6 +45,7 @@ interface Options {
   jsonl: string[];
   aliases?: string;
   forceUpload: boolean;
+  backfillSlideText: boolean;
   concurrency: number;
   retries: number;
   dryRun: boolean;
@@ -61,6 +64,7 @@ function parseOptions(argv: string[]): Options {
         remote: { type: "boolean", default: false },
         "persist-to": { type: "string" },
         "force-upload": { type: "boolean", default: false },
+        "backfill-slide-text": { type: "boolean", default: false },
         concurrency: { type: "string" },
         retries: { type: "string", default: "3" },
         "dry-run": { type: "boolean", default: false },
@@ -73,8 +77,11 @@ function parseOptions(argv: string[]): Options {
     throw new UsageError((e as Error).message);
   }
   if (values.help) throw new UsageError("");
-  if (!values.out) throw new UsageError("--out は必須です");
-  if (!values.jsonl?.length) throw new UsageError("--jsonl を 1 つ以上指定してください");
+  const backfillSlideText = values["backfill-slide-text"] === true;
+  if (!backfillSlideText) {
+    if (!values.out) throw new UsageError("--out は必須です");
+    if (!values.jsonl?.length) throw new UsageError("--jsonl を 1 つ以上指定してください");
+  }
   if (values.remote && values["persist-to"]) throw new UsageError("--remote と --persist-to は併用できません");
 
   const concurrency = values.concurrency === undefined ? (values.remote ? 4 : 1) : Number(values.concurrency);
@@ -88,10 +95,11 @@ function parseOptions(argv: string[]): Options {
 
   // wrangler は workers/ を cwd に動くので、ユーザー指定パスは絶対パスにしておく
   return {
-    out: path.resolve(values.out),
-    jsonl: values.jsonl.map((p) => path.resolve(p)),
+    out: path.resolve(values.out ?? "."),
+    jsonl: (values.jsonl ?? []).map((p) => path.resolve(p)),
     aliases: values.aliases && path.resolve(values.aliases),
     forceUpload: values["force-upload"],
+    backfillSlideText,
     concurrency,
     retries,
     dryRun: values["dry-run"],
@@ -141,6 +149,66 @@ async function mapLimit<T>(items: T[], limit: number, fn: (item: T) => Promise<v
   await Promise.all(workers);
 }
 
+/** content_text が空のスライドを R2 から埋める */
+async function backfillSlideText(
+  opts: Options,
+  emit: (event: Record<string, unknown>) => void,
+): Promise<number> {
+  const rows = await withRetry(opts.retries, () =>
+    d1Query<{ id: string; r2_key: string | null }>(
+      opts.target,
+      "SELECT id, r2_key FROM contents WHERE type = 'slide' AND (content_text IS NULL OR content_text = '')",
+    ),
+  );
+  emit({ event: "backfill_start", targets: rows.length });
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "moocs-backfill-"));
+  let updated = 0;
+  let failed = 0;
+  try {
+    const statements: string[] = [];
+    for (const r of rows) {
+      const key = r.r2_key ?? `${r.id}/slides.pdf`;
+      const dest = path.join(tmp, `${r.id.replace(/[\\/]/g, "_")}.pdf`);
+      try {
+        await withRetry(opts.retries, () => r2Get(opts.target, key, dest));
+      } catch {
+        emit({ event: "backfill_missing", id: r.id, key });
+        failed++;
+        continue;
+      }
+      const data = await readFile(dest);
+      const text = await pdfToText(data);
+      if (!text) {
+        emit({ event: "backfill_empty", id: r.id, key });
+        failed++;
+        continue;
+      }
+      const esc = (s: string) => s.replace(/'/g, "''");
+      statements.push(
+        `UPDATE contents SET content_text = '${esc(text)}', text_bg = '${esc(toBigramText(text))}' WHERE id = '${esc(r.id)}';`,
+      );
+      updated++;
+      if (statements.length >= 20) {
+        const f = path.join(tmp, `batch-${updated}.sql`);
+        await writeFile(f, statements.join("\n"), "utf8");
+        await withRetry(opts.retries, () => d1ExecuteFile(opts.target, f));
+        statements.length = 0;
+        emit({ event: "backfill_batch", updated });
+      }
+    }
+    if (statements.length > 0) {
+      const f = path.join(tmp, "batch-rest.sql");
+      await writeFile(f, statements.join("\n"), "utf8");
+      await withRetry(opts.retries, () => d1ExecuteFile(opts.target, f));
+      emit({ event: "backfill_batch", updated });
+    }
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+  emit({ event: "backfill_summary", targets: rows.length, updated, failed });
+  return 0;
+}
+
 export async function run(argv: string[]): Promise<number> {
   let opts: Options;
   try {
@@ -155,6 +223,10 @@ export async function run(argv: string[]): Promise<number> {
   // --dry-run では stdout を SQL 専用にし、進捗イベントは stderr へ
   const events = opts.dryRun ? process.stderr : process.stdout;
   const emit = (event: Record<string, unknown>) => events.write(`${JSON.stringify(event)}\n`);
+
+  if (opts.backfillSlideText) {
+    return backfillSlideText(opts, emit);
+  }
 
   const manifest: Manifest = emptyManifest();
   for (const file of opts.jsonl) {
