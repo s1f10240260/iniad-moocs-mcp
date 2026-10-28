@@ -16,7 +16,7 @@ import { parseArgs } from "node:util";
 import { htmlToText, sanitizeHtml } from "./html.js";
 import { addJsonl, emptyManifest, type Manifest } from "./manifest.js";
 import { pdfToText } from "./pdf.js";
-import { buildAliasStatements, buildStatements, type ContentRow } from "./sql.js";
+import { buildAliasStatements, buildReindexStatements, buildStatements, type ContentRow, type ReindexRow } from "./sql.js";
 import { toBigramText } from "../src/search/bigram.js";
 import { d1ExecuteFile, d1Query, r2Get, r2Put, type WranglerTarget } from "./wrangler.js";
 
@@ -32,6 +32,7 @@ const USAGE = `usage: ingest --out <dir> --jsonl <file> [--jsonl <file> ...] [op
   --persist-to <dir>   ローカル D1 / R2 の永続化先
   --force-upload       ハッシュが同じ PDF も R2 に再アップロードする
   --backfill-slide-text  既存スライドの content_text を R2 の PDF から埋める（--out/--jsonl 不要）
+  --reindex            D1 の全行の *_bg を元列から作り直す（--out/--jsonl 不要）
   --concurrency <n>    R2 アップロード並列数（既定: ローカル 1 / リモート 4）
   --retries <n>        wrangler 呼び出しの再試行回数（既定 3）
   --dry-run            D1 / R2 に触れず、生成した SQL を stdout に出す
@@ -46,6 +47,7 @@ interface Options {
   aliases?: string;
   forceUpload: boolean;
   backfillSlideText: boolean;
+  reindex: boolean;
   concurrency: number;
   retries: number;
   dryRun: boolean;
@@ -65,6 +67,7 @@ function parseOptions(argv: string[]): Options {
         "persist-to": { type: "string" },
         "force-upload": { type: "boolean", default: false },
         "backfill-slide-text": { type: "boolean", default: false },
+        reindex: { type: "boolean", default: false },
         concurrency: { type: "string" },
         retries: { type: "string", default: "3" },
         "dry-run": { type: "boolean", default: false },
@@ -78,7 +81,8 @@ function parseOptions(argv: string[]): Options {
   }
   if (values.help) throw new UsageError("");
   const backfillSlideText = values["backfill-slide-text"] === true;
-  if (!backfillSlideText) {
+  const reindex = values.reindex === true;
+  if (!backfillSlideText && !reindex) {
     if (!values.out) throw new UsageError("--out は必須です");
     if (!values.jsonl?.length) throw new UsageError("--jsonl を 1 つ以上指定してください");
   }
@@ -100,6 +104,7 @@ function parseOptions(argv: string[]): Options {
     aliases: values.aliases && path.resolve(values.aliases),
     forceUpload: values["force-upload"],
     backfillSlideText,
+    reindex,
     concurrency,
     retries,
     dryRun: values["dry-run"],
@@ -210,6 +215,62 @@ async function backfillSlideText(
   return 0;
 }
 
+/** D1 全行の *_bg を元列から作り直す */
+async function reindexBigram(
+  opts: Options,
+  emit: (event: Record<string, unknown>) => void,
+): Promise<number> {
+  const plans: {
+    table: "courses" | "lectures" | "contents";
+    select: string;
+    sources: string[];
+  }[] = [
+    {
+      table: "courses",
+      select: "SELECT id, code, name, aliases FROM courses",
+      sources: ["code", "name", "aliases"],
+    },
+    {
+      table: "lectures",
+      select: "SELECT id, title FROM lectures",
+      sources: ["title"],
+    },
+    {
+      table: "contents",
+      select: "SELECT id, title, content_text FROM contents",
+      sources: ["title", "content_text"],
+    },
+  ];
+  let updated = 0;
+  for (const p of plans) {
+    const rows = await withRetry(opts.retries, () =>
+      d1Query<Record<string, string | null>>(opts.target, p.select),
+    );
+    const reindexRows: ReindexRow[] = rows.map((r) => {
+      const sources: Record<string, string> = {};
+      for (const col of p.sources) sources[col] = r[col] ?? "";
+      return { id: String(r.id), sources };
+    });
+    const statements = buildReindexStatements(p.table, reindexRows);
+    const tmp = await mkdtemp(path.join(os.tmpdir(), "moocs-reindex-"));
+    try {
+      for (let i = 0; i < statements.length; i += 50) {
+        const chunk = statements.slice(i, i + 50);
+        const f = path.join(tmp, `${p.table}-${i}.sql`);
+        await writeFile(f, chunk.join("\n"), "utf8");
+        await withRetry(opts.retries, () => d1ExecuteFile(opts.target, f));
+        updated += chunk.length;
+        emit({ event: "reindex_batch", table: p.table, statements: chunk.length });
+      }
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+    emit({ event: "reindex_table", table: p.table, rows: rows.length });
+  }
+  emit({ event: "reindex_summary", statements: updated });
+  return 0;
+}
+
 export async function run(argv: string[]): Promise<number> {
   let opts: Options;
   try {
@@ -227,6 +288,9 @@ export async function run(argv: string[]): Promise<number> {
 
   if (opts.backfillSlideText) {
     return backfillSlideText(opts, emit);
+  }
+  if (opts.reindex) {
+    return reindexBigram(opts, emit);
   }
 
   const manifest: Manifest = emptyManifest();

@@ -135,3 +135,36 @@ export function buildAliasStatements(aliases: ReadonlyMap<string, string[]>): st
   );
   return statements;
 }
+
+export interface ReindexRow {
+  id: string;
+  /** 元列名 → 値 */
+  sources: Record<string, string>;
+}
+
+/**
+ * D1 に既存の行から *_bg を作り直す UPDATE 文を組み立てる。
+ * 値が変わらない行は更新しない（FTS トリガーを余計に走らせない）。
+ */
+export function buildReindexStatements(
+  table: "courses" | "lectures" | "contents",
+  rows: ReindexRow[],
+): string[] {
+  const statements: string[] = [];
+  for (const row of rows) {
+    const sets: string[] = [];
+    for (const [col, value] of Object.entries(row.sources)) {
+      const bg = toBigramText(value);
+      sets.push(`${col}_bg = ${sqlLiteral(bg)}`);
+    }
+    if (sets.length === 0) continue;
+    const changed = Object.keys(row.sources)
+      .map((col) => `${table}.${col}_bg IS NOT ${sqlLiteral(toBigramText(row.sources[col]))}`)
+      .join(" OR ");
+    statements.push(
+      `UPDATE ${table} SET ${sets.join(", ")}, updated_at = datetime('now') ` +
+        `WHERE id = ${sqlLiteral(row.id)} AND (${changed});`,
+    );
+  }
+  return statements;
+}
