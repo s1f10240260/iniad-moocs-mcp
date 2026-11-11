@@ -1,7 +1,7 @@
 # 収集ワークフロー
 # 方針:
-#   新しい内容（新規の回・課題）→ 1 日以内（delta ジョブ / 毎日）
-#   変更（既存データの差し替え）  → 1 週間以内（batch ジョブ / 曜日 1/7 をフル更新）
+#   新しい内容（新規の回・課題）→ 1 日以内（delta ジョブ / 毎日 JST 0:00）
+#   変更（既存データの差し替え）  → 1 週間以内（batch ジョブ / 曜日 1/7 をフル更新・JST 3:00）
 #
 # Secrets:
 #   MOOCS_USERNAME / MOOCS_PASSWORD — ログイン
@@ -11,8 +11,9 @@ name: collect-moocs
 
 on:
   schedule:
-    - cron: "0 0 * * *"   # 毎日 0:00 UTC — delta
-    - cron: "0 3 * * *"   # 毎日 3:00 UTC — 今日のバッチ分をフル更新
+    # cron は UTC 表記。日本時間 = UTC+9
+    - cron: "0 15 * * *"   # 毎日 JST 0:00 — delta（新着を 1 日以内で）
+    - cron: "0 18 * * *"   # 毎日 JST 3:00 — 今日のバッチ分をフル更新（変更は 1 週間以内）
   workflow_dispatch:
     inputs:
       year:
