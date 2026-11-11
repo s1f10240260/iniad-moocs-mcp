@@ -74,7 +74,9 @@ jobs:
 
       - name: Install contents-collector
         working-directory: collector/contents
-        run: python -m pip install -e .
+        run: |
+          python -m pip install -e .
+          python -m playwright install --with-deps chromium
 
       - name: Discover IDs (Moocs)
         env:
@@ -110,11 +112,6 @@ jobs:
           else
             echo "no new lectures"
           fi
-
-      - name: Install playwright
-        if: ${{ github.event.inputs.skip_contents != 'true' }}
-        working-directory: collector/contents
-        run: python -m playwright install --with-deps chromium
 
       - name: Collect new contents
         if: ${{ github.event.inputs.skip_contents != 'true' }}
