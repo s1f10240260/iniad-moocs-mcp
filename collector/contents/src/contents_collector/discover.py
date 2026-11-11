@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="カンマ区切り CODE。空なら ci/course-all.txt を読む",
     )
-    p.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[3])
+    p.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[4])
     args = p.parse_args(argv)
 
     user = os.environ.get("MOOCS_USERNAME")
