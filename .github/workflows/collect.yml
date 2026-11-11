@@ -1,18 +1,18 @@
-# 毎日 0:00 UTC に Moocs からデータ収集
-# 設計: ../../DESIGN.md 「運用設定」
+# 収集ワークフロー
+# 方針:
+#   新しい内容（新規の回・課題）→ 1 日以内（delta ジョブ / 毎日）
+#   変更（既存データの差し替え）  → 1 週間以内（batch ジョブ / 曜日 1/7 をフル更新）
 #
 # Secrets:
-#   MOOCS_USERNAME / MOOCS_PASSWORD — ログイン（Secrets に置き平文ログに出さない）
-#   CLOUDFLARE_API_TOKEN  — R2 / D1 更新用
-#   CLOUDFLARE_ACCOUNT_ID
-#
-# 初回は course に CODE を指定して 1 コース分だけ流す（contents は 100 回/日制限あり）
+#   MOOCS_USERNAME / MOOCS_PASSWORD — ログイン
+#   CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_DATABASE_ID
 
 name: collect-moocs
 
 on:
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 0 * * *"   # 毎日 0:00 UTC — delta
+    - cron: "0 3 * * *"   # 毎日 3:00 UTC — 今日のバッチ分をフル更新
   workflow_dispatch:
     inputs:
       year:
@@ -20,9 +20,18 @@ on:
         required: true
         default: "2026"
       course:
-        description: "コース CODE（カンマ区切り可）。空なら --all"
+        description: "コース CODE（カンマ区切り可）。batch で空なら今日のバッチ"
         required: false
         default: ""
+      mode:
+        description: "実行モード"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - delta
+          - batch
       skip_contents:
         description: "skip contents collect (rate limit)"
         required: false
@@ -36,9 +45,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  collect:
+  # ---------------------------------------------------------------
+  # 新着のみ毎日収集（1 日以内の鮮度）
+  # ---------------------------------------------------------------
+  delta:
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'all' || inputs.mode == 'delta' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 
@@ -54,31 +67,171 @@ jobs:
         working-directory: collector/slides
         run: cargo build --release
 
-      - name: Collect slides (non-interactive)
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install contents-collector
+        working-directory: collector/contents
+        run: python -m pip install -e .
+
+      - name: Discover IDs (Moocs)
         env:
           MOOCS_USERNAME: ${{ secrets.MOOCS_USERNAME }}
           MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
         run: |
           YEAR="${{ github.event.inputs.year || '2026' }}"
-          COURSE="${{ github.event.inputs.course }}"
-          if [ "${{ github.event_name }}" = "schedule" ] && [ -z "$COURSE" ]; then
-            COURSE=$(tr -d '[:space:]' < ci/course-all.txt)
-            [ -z "$COURSE" ] && COURSE="INI201,INI202"
-            echo "schedule batch day=$DOW courses=$COURSE"
-          fi
+          python -m contents_collector.discover \
+            --year "$YEAR" \
+            --out discover.json \
+            ${{ github.event.inputs.course && format('--courses {0}', github.event.inputs.course) || '' }}
+
+      - name: Plan delta vs D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node workers/scripts/plan-delta.mjs --discover discover.json --outdir .
+
+      - name: Collect new slides
+        env:
+          MOOCS_USERNAME: ${{ secrets.MOOCS_USERNAME }}
+          MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
+        run: |
+          YEAR="${{ github.event.inputs.year || '2026' }}"
           BIN=./collector/slides/target/release/collect-headless
-          if [ -n "$COURSE" ]; then
-            : > collect-slides.jsonl
-            IFS=',' read -ra LIST <<< "$COURSE"
-            for c in "${LIST[@]}"; do
-              code="$(echo "$c" | tr -d '[:space:]')"
-              [ -z "$code" ] && continue
-              echo "== collect slides $code"
-              "$BIN" --year "$YEAR" --path ./out --course "$code" --json --retries 3 | tee -a collect-slides.jsonl
-            done
+          : > collect-slides.jsonl
+          if [ -s delta-lectures.txt ]; then
+            while read -r CODE LL; do
+              [ -z "$CODE" ] && continue
+              echo "== new slides $CODE $LL"
+              "$BIN" --year "$YEAR" --path ./out --course "$CODE" --lecture "$LL" --json --retries 3 | tee -a collect-slides.jsonl
+            done < delta-lectures.txt
           else
-            "$BIN" --year "$YEAR" --path ./out --all --json --retries 3 | tee collect-slides.jsonl
+            echo "no new lectures"
           fi
+
+      - name: Install playwright
+        if: ${{ github.event.inputs.skip_contents != 'true' }}
+        working-directory: collector/contents
+        run: python -m playwright install --with-deps chromium
+
+      - name: Collect new contents
+        if: ${{ github.event.inputs.skip_contents != 'true' }}
+        env:
+          MOOCS_USERNAME: ${{ secrets.MOOCS_USERNAME }}
+          MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
+        run: |
+          YEAR="${{ github.event.inputs.year || '2026' }}"
+          : > collect-contents.jsonl
+          if [ -s delta-contents.txt ]; then
+            while read -r CODE LL TYPE; do
+              [ -z "$CODE" ] && continue
+              echo "== new contents $CODE $LL $TYPE"
+              contents-collector --year "$YEAR" --path ./out --course "$CODE" --lecture "$LL" --json | tee -a collect-contents.jsonl
+            done < delta-contents.txt
+          else
+            echo "no new contents"
+          fi
+
+      - name: Empty contents jsonl when skipped
+        if: ${{ github.event.inputs.skip_contents == 'true' }}
+        run: touch collect-contents.jsonl
+
+      - name: Upload delta artifact
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: moocs-delta-${{ github.run_id }}
+          path: |
+            collect-*.jsonl
+            delta-*.txt
+            discover.json
+          retention-days: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: workers/package-lock.json
+
+      - name: Install ingest deps
+        working-directory: workers
+        run: npm ci
+
+      - name: Ingest to D1 / R2
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "CLOUDFLARE_* secrets not set -- skip D1/R2, artifact only"
+            exit 0
+          fi
+          node workers/scripts/patch-d1-id.cjs
+          cd workers
+          npm run db:remote
+          npm run ingest -- \
+            --out ../out \
+            --jsonl ../collect-slides.jsonl \
+            --jsonl ../collect-contents.jsonl \
+            --remote \
+            --retries 3
+
+  # ---------------------------------------------------------------
+  # 曜日バッチ: 1 日 1/7 のコースをフル再取得（変更は 1 週間以内）
+  # ---------------------------------------------------------------
+  batch:
+    if: ${{ github.event_name == 'schedule' || inputs.mode == 'all' || inputs.mode == 'batch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve today's batch
+        id: batch
+        run: |
+          YEAR="${{ github.event.inputs.year || '2026' }}"
+          COURSE="${{ github.event.inputs.course }}"
+          if [ -z "$COURSE" ]; then
+            DOW=$(date +%u)   # 月=1 … 日=7
+            COURSE=$(sed -n "${DOW}p" ci/course-batches.txt | tr -d '[:space:]')
+            [ -z "$COURSE" ] && COURSE="INI201,INI202"
+            echo "batch day=$DOW courses=$COURSE"
+          fi
+          echo "courses=$COURSE" >> "$GITHUB_OUTPUT"
+          echo "year=$YEAR" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: collector/slides
+
+      - name: Build collect-headless
+        working-directory: collector/slides
+        run: cargo build --release
+
+      - name: Collect slides (batch)
+        env:
+          MOOCS_USERNAME: ${{ secrets.MOOCS_USERNAME }}
+          MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
+        run: |
+          YEAR="${{ steps.batch.outputs.year }}"
+          COURSE="${{ steps.batch.outputs.courses }}"
+          BIN=./collector/slides/target/release/collect-headless
+          : > collect-slides.jsonl
+          IFS=',' read -ra LIST <<< "$COURSE"
+          for c in "${LIST[@]}"; do
+            code="$(echo "$c" | tr -d '[:space:]')"
+            [ -z "$code" ] && continue
+            echo "== batch slides $code"
+            "$BIN" --year "$YEAR" --path ./out --course "$code" --json --retries 3 | tee -a collect-slides.jsonl
+          done
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -91,46 +244,36 @@ jobs:
           python -m pip install -e .
           python -m playwright install --with-deps chromium
 
-      - name: Empty contents jsonl when skipped
-        if: ${{ github.event.inputs.skip_contents == 'true' }}
-        run: touch collect-contents.jsonl
-
-      - name: Collect quizzes & assignments
+      - name: Collect contents (batch)
         if: ${{ github.event.inputs.skip_contents != 'true' }}
         env:
           MOOCS_USERNAME: ${{ secrets.MOOCS_USERNAME }}
           MOOCS_PASSWORD: ${{ secrets.MOOCS_PASSWORD }}
         run: |
-          YEAR="${{ github.event.inputs.year || '2026' }}"
-          COURSE="${{ github.event.inputs.course }}"
-          if [ "${{ github.event_name }}" = "schedule" ] && [ -z "$COURSE" ]; then
-            COURSE=$(tr -d '[:space:]' < ci/course-all.txt)
-            [ -z "$COURSE" ] && COURSE="INI201,INI202"
-            echo "schedule batch day=$DOW courses=$COURSE"
-          fi
-          if [ -n "$COURSE" ]; then
-            : > collect-contents.jsonl
-            IFS=',' read -ra LIST <<< "$COURSE"
-            for c in "${LIST[@]}"; do
-              code="$(echo "$c" | tr -d '[:space:]')"
-              [ -z "$code" ] && continue
-              echo "== collect contents $code"
-              contents-collector --year "$YEAR" --path ./out --course "$code" --json | tee -a collect-contents.jsonl
-            done
-          else
-            contents-collector --year "$YEAR" --path ./out --all --json | tee collect-contents.jsonl
-          fi
+          YEAR="${{ steps.batch.outputs.year }}"
+          COURSE="${{ steps.batch.outputs.courses }}"
+          : > collect-contents.jsonl
+          IFS=',' read -ra LIST <<< "$COURSE"
+          for c in "${LIST[@]}"; do
+            code="$(echo "$c" | tr -d '[:space:]')"
+            [ -z "$code" ] && continue
+            echo "== batch contents $code"
+            contents-collector --year "$YEAR" --path ./out --course "$code" --json | tee -a collect-contents.jsonl
+          done
 
-      - name: Upload artifact
+      - name: Empty contents jsonl when skipped
+        if: ${{ github.event.inputs.skip_contents == 'true' }}
+        run: touch collect-contents.jsonl
+
+      - name: Upload batch artifact
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: moocs-collect-${{ github.run_id }}
+          name: moocs-batch-${{ github.run_id }}
           path: |
             collect-*.jsonl
           retention-days: 1
 
-      # Phase 5: ingest to R2 / D1 (skip when CLOUDFLARE secrets are absent)
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
