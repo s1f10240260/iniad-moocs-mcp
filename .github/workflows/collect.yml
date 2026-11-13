@@ -52,7 +52,8 @@ jobs:
   delta:
     if: ${{ github.event_name == 'schedule' || inputs.mode == 'all' || inputs.mode == 'delta' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 初回は D1 が空で「新規」が多く長引く。以降は差分のみで短い
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 
