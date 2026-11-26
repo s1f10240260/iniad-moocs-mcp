@@ -51,9 +51,9 @@ Claude Desktop などから Moocs を検索・取得するための手順。
 ### 1. セッショントークンを取る
 
 ```bash
-curl -sS -X POST https://moocs-mcp.s1f102402608.workers.dev/login \
+curl -sS -X POST https://moocs-mcp.<your-subdomain>.workers.dev/login \
   -H 'content-type: application/json' \
-  -d '{"username":"s1f102402608","password":"<Moocs パスワード>"}'
+  -d '{"username":"<Moocs ユーザー名>","password":"<Moocs パスワード>"}'
 # → {"token_type":"Bearer","access_token":"...","expires_in":2592000}（30日）
 ```
 
@@ -67,7 +67,7 @@ curl -sS -X POST https://moocs-mcp.s1f102402608.workers.dev/login \
 {
   "name": "iniad-moocs",
   "transport": "http",
-  "url": "https://moocs-mcp.s1f102402608.workers.dev/mcp",
+  "url": "https://moocs-mcp.<your-subdomain>.workers.dev/mcp",
   "headers": {
     "Authorization": "Bearer <access_token>"
   }
